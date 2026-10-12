@@ -1,0 +1,147 @@
+/* ==========================================================================
+   PokéSilver PC — front-end styling
+   ========================================================================== */
+:root{
+  --bg:#0b0e12;
+  --panel:#151a21;
+  --panel-2:#1c232c;
+  --ink:#e7ecf2;
+  --muted:#93a0ad;
+  --accent:#c9d4df;
+  --accent-2:#7fa7c9;
+  --danger:#e0604f;
+  --radius:14px;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  background:
+    radial-gradient(1200px 700px at 50% -10%, #16202b 0%, transparent 60%),
+    var(--bg);
+  color:var(--ink);
+  font:15px/1.5 ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  overflow:hidden;
+}
+#app{height:100%}
+.screen{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.hidden{display:none !important}
+
+/* ---------------------------------------------------------------- launcher */
+.launcher-card{
+  width:min(560px, 92vw);
+  background:linear-gradient(180deg, var(--panel-2), var(--panel));
+  border:1px solid #26303c;
+  border-radius:var(--radius);
+  padding:34px 36px 26px;
+  text-align:center;
+  box-shadow:0 24px 70px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
+}
+.launcher-mark{margin-bottom:6px}
+.launcher-card h1{
+  margin:.2em 0 .1em;
+  font-size:30px;
+  letter-spacing:.06em;
+  font-weight:650;
+}
+.tag{color:var(--muted);margin:0 0 22px;font-size:13px}
+.launcher-actions{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+button{
+  appearance:none;border:1px solid #2c3743;border-radius:10px;
+  background:#222b35;color:var(--ink);
+  padding:10px 16px;font:inherit;cursor:pointer;
+  transition:background .12s ease, transform .06s ease;
+}
+button:hover{background:#2b3541}
+button:active{transform:translateY(1px)}
+button.primary{
+  background:linear-gradient(180deg,#3b4a5a,#2c3947);
+  border-color:#46586b;
+  font-weight:600;
+}
+button.primary:hover{background:linear-gradient(180deg,#44566a,#334252)}
+button.danger{border-color:#5c3129;color:#ffb4a8;background:#33201c}
+button.danger:hover{background:#402721}
+.launcher-note{margin-top:18px;color:var(--muted);font-size:12.5px;text-align:left}
+.launcher-note code{color:var(--accent);background:#0f141a;padding:1px 5px;border-radius:5px}
+.status{color:#8fd0a0;min-height:1.2em}
+.launcher-help{margin-top:16px;text-align:left;font-size:13px}
+.launcher-help summary{cursor:pointer;color:var(--muted)}
+table.keys{margin-top:10px;border-collapse:collapse;width:100%}
+table.keys td{padding:3px 8px;color:var(--muted)}
+table.keys td:first-child{width:44%;text-align:right;color:var(--ink)}
+kbd{
+  background:#0f141a;border:1px solid #2c3743;border-bottom-width:2px;
+  border-radius:6px;padding:1px 7px;font:12px ui-monospace,monospace;color:var(--accent);
+}
+
+/* ------------------------------------------------------------------ stage */
+#stage{background:#000}
+#bezel-wrap{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center}
+.bezel{position:relative;display:flex;align-items:center;justify-content:center}
+#bezel-svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#screen-well{position:relative;z-index:2}
+#lcd,#lcd-clean{display:block;image-rendering:pixelated;background:#000}
+/* clean (bezel-off) mode: hide the shell and let the well fill the stage */
+#bezel-wrap.clean-mode #bezel-svg{display:none}
+#bezel-wrap.clean-mode #bezel{position:absolute;inset:0}
+#bezel-wrap.clean-mode #screen-well{
+  position:absolute !important;
+  left:50% !important; top:50% !important;
+  transform:translate(-50%,-50%);
+}
+
+/* ------------------------------------------------------------------- HUD */
+.hud{position:absolute;inset:0;pointer-events:none;z-index:40}
+.toast{
+  position:absolute;left:50%;transform:translateX(-50%);
+  background:rgba(12,16,21,.86);
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:999px;
+  padding:7px 18px;
+  font-size:13.5px;letter-spacing:.02em;
+  color:#eef3f8;
+  backdrop-filter:blur(6px);
+  animation:toast-in .18s ease-out, toast-out .3s ease-in forwards;
+  white-space:nowrap;
+}
+.toast.top{top:26px}
+.toast.bottom{bottom:30px}
+@keyframes toast-in{from{opacity:0;transform:translateX(-50%) translateY(8px)}to{opacity:1;transform:translateX(-50%)}}
+@keyframes toast-out{to{opacity:0}}
+
+/* --------------------------------------------------------------- overlay */
+.overlay{
+  position:absolute;inset:0;z-index:60;
+  background:rgba(5,8,11,.72);
+  backdrop-filter:blur(8px);
+  display:flex;align-items:center;justify-content:center;
+}
+.overlay-card{
+  width:min(760px,94vw);max-height:88vh;overflow:auto;
+  background:var(--panel);border:1px solid #26303c;border-radius:var(--radius);
+  padding:22px 26px;
+  box-shadow:0 30px 80px rgba(0,0,0,.6);
+}
+.overlay-card header{display:flex;align-items:center;justify-content:space-between}
+.overlay-card h2{margin:0;font-size:19px;font-weight:600}
+.icon-btn{padding:2px 12px;font-size:20px;line-height:1.4}
+.overlay-card section{
+  margin-top:18px;padding-top:14px;border-top:1px solid #202933;
+  display:grid;grid-template-columns:1fr 1fr;gap:10px 26px;
+}
+.overlay-card section h3{grid-column:1/-1;margin:0 0 2px;font-size:13px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted)}
+.overlay-card label{display:flex;flex-direction:column;gap:5px;font-size:13px;color:var(--muted)}
+.overlay-card label.row{flex-direction:row;align-items:center;gap:9px}
+select,input[type=text],input:not([type]){
+  background:#0f141a;border:1px solid #2c3743;border-radius:8px;
+  color:var(--ink);padding:7px 9px;font:inherit;
+}
+input[type=range]{width:100%}
+.btn-row{grid-column:1/-1;display:flex;gap:9px;flex-wrap:wrap}
+.btn-row input{flex:1;min-width:160px}
+.muted{color:var(--muted);font-size:12.5px;margin:4px 0}
+.mod-list{grid-column:1/-1;margin:6px 0 0;padding-left:18px;font-size:13px;color:var(--accent)}
+.mod-list li{margin:2px 0}
+.mod-list .on{color:#8fd0a0}
+.overlay-card footer{margin-top:20px;display:flex;justify-content:flex-end}

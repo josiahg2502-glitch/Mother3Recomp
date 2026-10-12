@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PokéSilver PC — high-res Game Boy Color port</title>
+<meta name="description" content="An upscaled, high-resolution PC port of the Game Boy Color Pokémon Silver experience, with a launcher, mod support, controller presets and a custom bezel.">
+<link rel="stylesheet" href="css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23101418'/%3E%3Ccircle cx='16' cy='16' r='9' fill='%23c8d2dc'/%3E%3Ccircle cx='16' cy='16' r='9' fill='%237d8a96' clip-path='inset(50%25 0 0 0)'/%3E%3C/svg%3E">
+</head>
+<body>
+<div id="app">
+
+  <!-- =============================================================== -->
+  <!--  LAUNCHER                                                       -->
+  <!-- =============================================================== -->
+  <div id="launcher" class="screen">
+    <div class="launcher-card">
+      <div class="launcher-mark" aria-hidden="true">
+        <svg viewBox="0 0 96 96" width="72" height="72">
+          <defs>
+            <linearGradient id="lgm" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#e8eef4"/><stop offset="1" stop-color="#8d99a6"/>
+            </linearGradient>
+          </defs>
+          <circle cx="48" cy="48" r="40" fill="url(#lgm)"/>
+          <path d="M8 48a40 40 0 0 0 80 0z" fill="#5b6874"/>
+          <circle cx="48" cy="48" r="13" fill="#101418"/>
+        </svg>
+      </div>
+      <h1>PokéSilver&nbsp;PC</h1>
+      <p class="tag">high-resolution Game&nbsp;Boy&nbsp;Color port &middot; launcher, mods, controllers &amp; bezel</p>
+
+      <div class="launcher-actions">
+        <button id="btn-open-rom" class="primary">Open cartridge&hellip;</button>
+        <button id="btn-demo">Run core self-test demo</button>
+        <button id="btn-continue" class="hidden">Continue last session</button>
+      </div>
+      <input type="file" id="file-rom" accept=".gb,.gbc,.bin,.rom,.zip" hidden>
+      <input type="file" id="file-mod" accept=".ips,.ups,.bps,.patch" hidden multiple>
+
+      <div class="launcher-note">
+        <p>This port does not ship a game. Load your own legally dumped
+        <code>.gbc</code> cartridge (e.g. <em>Pokémon Silver</em>) — it is read
+        straight from disk and never uploaded.</p>
+        <p id="load-status" class="status"></p>
+      </div>
+
+      <details class="launcher-help">
+        <summary>Controls &amp; hotkeys</summary>
+        <table class="keys">
+          <tr><td><kbd>F10</kbd></td><td>toggle bezel &harr; clean 3:2 fullscreen</td></tr>
+          <tr><td><kbd>F9</kbd></td><td>cycle controller preset</td></tr>
+          <tr><td><kbd>F11</kbd></td><td>settings &amp; assist overlay</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>clean exit to launcher</td></tr>
+          <tr><td><kbd>F1</kbd>/<kbd>F2</kbd></td><td>quick save / quick load (slot 1)</td></tr>
+          <tr><td><kbd>&larr;&uarr;&darr;&rarr; Z X &crarr; &crarr;</kbd></td><td>d-pad, A, B, Start, Select</td></tr>
+          <tr><td><kbd>A S</kbd></td><td>L / R shoulder</td></tr>
+          <tr><td>gamepad</td><td>left stick d-pad, LT/RT shoulders, X&rarr;B, Y&rarr;A</td></tr>
+        </table>
+      </details>
+    </div>
+  </div>
+
+  <!-- =============================================================== -->
+  <!--  GAME VIEW                                                      -->
+  <!-- =============================================================== -->
+  <div id="stage" class="screen hidden">
+    <div id="bezel-wrap">
+      <!-- the bezel is drawn as an SVG shell around the canvas -->
+      <div id="bezel" class="bezel">
+        <svg id="bezel-svg" viewBox="0 0 1180 760" preserveAspectRatio="xMidYMid meet" aria-hidden="true"></svg>
+        <div id="screen-well">
+          <canvas id="lcd" width="160" height="144"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- HUD toast layer -->
+    <div id="hud" class="hud"></div>
+
+    <!-- ============================================================= -->
+    <!--  SETTINGS / ASSIST OVERLAY (F11)                              -->
+    <!-- ============================================================= -->
+    <div id="overlay" class="overlay hidden" role="dialog" aria-modal="true" aria-label="Settings and assist tools">
+      <div class="overlay-card">
+        <header>
+          <h2>Settings &amp; assist tools</h2>
+          <button id="btn-close-overlay" class="icon-btn" title="Close (F11 / Esc)">&times;</button>
+        </header>
+
+        <section>
+          <h3>Video</h3>
+          <label>Upscaler
+            <select id="opt-filter">
+              <option value="0">Nearest (crisp pixels)</option>
+              <option value="1" selected>Sharp bilinear (default)</option>
+              <option value="2">Smooth bilinear</option>
+              <option value="3">Pixel softening (rounded)</option>
+            </select>
+          </label>
+          <label class="row"><input type="checkbox" id="opt-grid" checked> LCD pixel grid</label>
+          <label class="row"><input type="checkbox" id="opt-scan"> Scanlines</label>
+          <label>Integer scale
+            <select id="opt-intscale">
+              <option value="0">Fill (best fit)</option>
+              <option value="1" selected>Largest integer</option>
+            </select>
+          </label>
+          <label>Colour correction
+            <select id="opt-color">
+              <option value="1" selected>Game Boy Color LCD</option>
+              <option value="2">Vivid</option>
+              <option value="0">None (raw)</option>
+            </select>
+          </label>
+        </section>
+
+        <section>
+          <h3>Audio &mdash; 16-bit enhanced</h3>
+          <label>Mix
+            <select id="opt-audio">
+              <option value="0">Authentic DMG/CGB</option>
+              <option value="1" selected>Enhanced (warm + wide)</option>
+              <option value="2">Crystal (bright)</option>
+            </select>
+          </label>
+          <label>Volume <input type="range" id="opt-vol" min="0" max="150" value="100"></label>
+        </section>
+
+        <section>
+          <h3>Emulation</h3>
+          <label>Speed
+            <select id="opt-speed">
+              <option>50</option><option>75</option><option selected>100</option>
+              <option>150</option><option>200</option><option>400</option>
+            </select>
+          </label>
+          <label class="row"><input type="checkbox" id="opt-rtc" checked> Real-time clock (MBC3)</label>
+          <div class="btn-row">
+            <button id="btn-save">Save state (F1)</button>
+            <button id="btn-load">Load state (F2)</button>
+            <button id="btn-reset">Reset cartridge</button>
+          </div>
+        </section>
+
+        <section>
+          <h3>Mods</h3>
+          <p class="muted">IPS / UPS / BPS patches are applied over the clean
+          dump, in load order. Changes need a cartridge reset.</p>
+          <button id="btn-add-mod">Add patch file&hellip;</button>
+          <ul id="mod-list" class="mod-list"></ul>
+        </section>
+
+        <section>
+          <h3>Cheats (GameShark)</h3>
+          <div class="btn-row">
+            <input id="cheat-input" placeholder="e.g. 01F0D8CF" spellcheck="false">
+            <button id="btn-cheat-add">Add</button>
+            <button id="btn-cheat-clear">Clear</button>
+          </div>
+          <ul id="cheat-list" class="mod-list"></ul>
+        </section>
+
+        <section>
+          <h3>Input</h3>
+          <label>Preset
+            <select id="opt-pad">
+              <option value="0">Xbox Standard</option>
+              <option value="1">Nintendo Switch</option>
+              <option value="2">Modern Trigger Action</option>
+              <option value="3">Classic 1:1</option>
+            </select>
+          </label>
+          <p class="muted" id="pad-status">No controller detected.</p>
+        </section>
+
+        <footer>
+          <button id="btn-quit" class="danger">Exit to launcher (Esc)</button>
+        </footer>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="js/core.js"></script>
+<script src="js/input.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/video.js"></script>
+<script src="js/bezel.js"></script>
+<script src="js/state.js"></script>
+<script src="js/mods.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

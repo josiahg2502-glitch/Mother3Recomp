@@ -3,6 +3,10 @@
 *.GBA
 *.bin
 *.BIN
+# ...except the CPU test-vector fixture, which is a build of the MIT-licensed
+# singleStepTests/sm83 vectors (see pokemon-silver/tests/make_fixture.py) and
+# is required for the SM83 suite to run without network access.
+!pokemon-silver/tests/vectors.bin
 gba_bios.bin
 rom.cfg
 bios.cfg
@@ -40,3 +44,7 @@ _to_delete/
 Thumbs.db
 .vscode/
 .idea/
+
+# Python bytecode (tooling under pokemon-silver/tools, tests, pc)
+__pycache__/
+*.pyc
