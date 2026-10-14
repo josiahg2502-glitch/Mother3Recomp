@@ -23,13 +23,16 @@ jobs:
           ASSET_NAME: Mother3Recomp-v1.0.4-linux-x86_64.tar.gz
         run: |
           set -euo pipefail
+          set -euo pipefail
           api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
           authorization="Authorization: Bearer ${GITHUB_TOKEN}"
-          release_id=$(curl -fsSL -H 'Accept: application/vnd.github+json' -H "$authorization" "$api/releases?per_page=100" | jq -r '.[] | select(.tag_name == "v1.0.4" and .draft == true) | .id')
-          asset_id=$(curl -fsSL -H 'Accept: application/vnd.github+json' -H "$authorization" "$api/releases/$release_id/assets" | jq -r --arg name "$ASSET_NAME" '.[] | select(.name == $name) | .id')
-          test -n "$release_id" && test -n "$asset_id"
-          curl -fsSL -H 'Accept: application/octet-stream' -H "$authorization" \
-            "$api/releases/assets/$asset_id" -o "$RUNNER_TEMP/$ASSET_NAME"
+          status=$(curl -sSL -w '%{http_code}' -H 'Accept: application/octet-stream' -H "$authorization" \
+            "$api/releases/assets/639302081" -o "$RUNNER_TEMP/$ASSET_NAME")
+          if [ "$status" != '200' ]; then
+            echo "Draft release asset download returned HTTP $status" >&2
+            head -c 1000 "$RUNNER_TEMP/$ASSET_NAME" >&2 || true
+            exit 1
+          fi
           echo "$EXPECTED_SHA256  $RUNNER_TEMP/$ASSET_NAME" | sha256sum --check
 
       - name: Verify package and launch its first-run screen
@@ -58,4 +61,5 @@ jobs:
             echo "Launcher did not remain open at the first-run screen (exit $status)" >&2
             exit 1
           fi
+
 
