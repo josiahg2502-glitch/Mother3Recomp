@@ -1,0 +1,60 @@
+name: Linux v1.0.4 package smoke test
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/linux-v104-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Linux runtime dependencies
+        run: sudo apt-get update && sudo apt-get install --yes libgl1 libgl1-mesa-dri libsdl2-2.0-0 xvfb xauth
+
+      - name: Download the exact v1.0.4 draft Linux package
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          EXPECTED_SHA256: 053100d7365c937cbd15a395421f3eedd1afee9ea8bcedfa9fd1c02bd39705ad
+          ASSET_NAME: Mother3Recomp-v1.0.4-linux-x86_64.tar.gz
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          authorization="Authorization: Bearer ${GITHUB_TOKEN}"
+          release_id=$(curl -fsSL -H 'Accept: application/vnd.github+json' -H "$authorization" "$api/releases/tags/v1.0.4" | jq -r '.id')
+          asset_id=$(curl -fsSL -H 'Accept: application/vnd.github+json' -H "$authorization" "$api/releases/$release_id/assets" | jq -r --arg name "$ASSET_NAME" '.[] | select(.name == $name) | .id')
+          test -n "$release_id" && test -n "$asset_id"
+          curl -fsSL -H 'Accept: application/octet-stream' -H "$authorization" \
+            "$api/releases/assets/$asset_id" -o "$RUNNER_TEMP/$ASSET_NAME"
+          echo "$EXPECTED_SHA256  $RUNNER_TEMP/$ASSET_NAME" | sha256sum --check
+
+      - name: Verify package and launch its first-run screen
+        env:
+          PACKAGE: ${{ runner.temp }}/Mother3Recomp-v1.0.4-linux-x86_64.tar.gz
+        run: |
+          set -euo pipefail
+          tar -tzf "$PACKAGE" | grep -qx 'Mother3Recomp-Linux/Mother3Recomp'
+          if tar -tzf "$PACKAGE" | grep -Eiq '(^|/)(roms?|bios)(/|$)|\.(gba|ups|ips|sav)$'; then
+            echo 'Refusing to test an archive containing ROM, BIOS, patch, or save data' >&2
+            exit 1
+          fi
+          tar -xzf "$PACKAGE" -C "$RUNNER_TEMP"
+          cd "$RUNNER_TEMP/Mother3Recomp-Linux"
+          test -x ./Mother3Recomp
+          ldd -r ./Mother3Recomp | tee "$RUNNER_TEMP/ldd.txt"
+          ! grep -q 'not found' "$RUNNER_TEMP/ldd.txt"
+          ./Mother3Recomp --help
+          ulimit -c 0
+          set +e
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a timeout --signal=TERM --kill-after=5s 15s ./Mother3Recomp >"$RUNNER_TEMP/launcher.log" 2>&1
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/launcher.log"
+          if [ "$status" -ne 124 ]; then
+            echo "Launcher did not remain open at the first-run screen (exit $status)" >&2
+            exit 1
+          fi
