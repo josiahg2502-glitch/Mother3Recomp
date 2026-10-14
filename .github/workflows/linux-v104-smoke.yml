@@ -26,8 +26,9 @@ jobs:
         run: |
           set -euo pipefail
           echo "$EXPECTED_SHA256  $PACKAGE" | sha256sum --check
-          tar -tzf "$PACKAGE" | grep -qx 'Mother3Recomp-Linux/Mother3Recomp'
-          if tar -tzf "$PACKAGE" | grep -Eiq '(^|/)(roms?|bios)(/|$)|\.(gba|ups|ips|sav)$'; then
+          tar -tzf "$PACKAGE" > "$RUNNER_TEMP/archive-contents.txt"
+          grep -qx 'Mother3Recomp-Linux/Mother3Recomp' "$RUNNER_TEMP/archive-contents.txt"
+          if grep -Eiq '(^|/)(roms?|bios)(/|$)|\.(gba|ups|ips|sav)$' "$RUNNER_TEMP/archive-contents.txt"; then
             echo 'Refusing to test an archive containing ROM, BIOS, patch, or save data' >&2
             exit 1
           fi
