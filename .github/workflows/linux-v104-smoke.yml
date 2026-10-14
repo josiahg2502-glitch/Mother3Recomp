@@ -25,7 +25,7 @@ jobs:
           set -euo pipefail
           api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
           authorization="Authorization: Bearer ${GITHUB_TOKEN}"
-          release_id=$(curl -fsSL -H 'Accept: application/vnd.github+json' -H "$authorization" "$api/releases/tags/v1.0.4" | jq -r '.id')
+          release_id=$(curl -fsSL -H 'Accept: application/vnd.github+json' -H "$authorization" "$api/releases?per_page=100" | jq -r '.[] | select(.tag_name == "v1.0.4" and .draft == true) | .id')
           asset_id=$(curl -fsSL -H 'Accept: application/vnd.github+json' -H "$authorization" "$api/releases/$release_id/assets" | jq -r --arg name "$ASSET_NAME" '.[] | select(.name == $name) | .id')
           test -n "$release_id" && test -n "$asset_id"
           curl -fsSL -H 'Accept: application/octet-stream' -H "$authorization" \
@@ -58,3 +58,4 @@ jobs:
             echo "Launcher did not remain open at the first-run screen (exit $status)" >&2
             exit 1
           fi
+
