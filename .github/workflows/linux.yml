@@ -55,10 +55,10 @@ jobs:
             echo "Private gameplay inputs unavailable; native package build continues."
           fi
       - name: Package native Linux build
-        if: inputs.native_asset_id != ''
+        if: github.event_name == 'pull_request' || inputs.native_asset_id != ''
         run: python3 tools/package_release.py 1.0.6 linux-x86_64 build/Mother3Recomp release-stage
       - uses: actions/upload-artifact@v4
-        if: inputs.native_asset_id != ''
+        if: github.event_name == 'pull_request' || inputs.native_asset_id != ''
         with:
           name: Mother3Recomp-v1.0.6-linux-x86_64
           path: release-stage/*.tar.gz
