@@ -6,7 +6,7 @@ Supply your own MOTHER 3 ROM. Desktop builds request a GBA BIOS; Android can use
 
 - **English:** use the English fan translation v1.3 ROM, or apply its UPS patch to a clean Japanese ROM.
 - **Spanish and other patches:** v1.0.4 onward accept IPS, IPS32, BPS and UPS patches through the launcher. Start with the ROM version required by the patch.
-- **HQ Audio:** use its patch with English v1.3. Follow the mod's included instructions.
+- **HQ Audio:** built in; it applies automatically to the Japanese ROM and supported fan translations after the selected language patch. Compatible ROM mods are handled when their sound layout matches.
 
 Unknown patch outputs use the compatibility interpreter and may run more slowly. Support varies by patch.
 

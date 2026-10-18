@@ -3678,10 +3678,13 @@ index c5de5ac..fc774fd 100644
          // Auto-window when nothing was specified and SDL is built in.
          if (!args.window_set && HostWindow::is_available()) {
              args.window = true;
-@@ -1456,7 +1482,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -1456,7 +1482,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
          return 1;
      }
      std::string rom_sha1 = lower_ascii(gba::sha1(rom.data(), rom.size()).hex());
++    if (opts.rom_post_load_hook &&
++        opts.rom_post_load_hook(rom.data(), rom.size(), rom_sha1.c_str()))
++        rom_sha1 = lower_ascii(gba::sha1(rom.data(), rom.size()).hex());
 -    if (rom_sha1 != lower_ascii(args.rom_sha1)) {
 +    const std::string alt_sha1 = opts.alt_rom_sha1 ? lower_ascii(opts.alt_rom_sha1) : "";
 +    if (!opts.allow_rom_sha1_mismatch && rom_sha1 != lower_ascii(args.rom_sha1) &&
@@ -3727,7 +3730,7 @@ index c5de5ac..fc774fd 100644
      if (!args.quiet) {
          std::printf("bios_loaded sha1=%s size=%zu\n",
                      bios.sha1_hex().c_str(), gba::GbaBios::kSize);
-@@ -1537,6 +1596,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -1537,6 +1593,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      if (!args.quiet)
          std::printf("bios_backend=%s\n",
                      gba::bios_hle_mode_name(gba::bios_hle_mode()));
@@ -3740,7 +3743,7 @@ index c5de5ac..fc774fd 100644
  
      // GBARECOMP_WS_WIP is an explicit development override for exercising the
      // generic expanded renderer in games that have not advertised capability.
-@@ -1550,6 +1615,10 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -1550,6 +1612,10 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      g_force_interp = 0;
      if (const char* fi = std::getenv("GBARECOMP_FORCE_INTERP"))
          g_force_interp = (fi[0] && fi[0] != '0') ? 1 : 0;
@@ -3751,7 +3754,7 @@ index c5de5ac..fc774fd 100644
      std::fprintf(stderr, "cpu_backend=%s\n",
                   g_force_interp ? "interpreter (GBARECOMP_FORCE_INTERP)"
                                  : "static-recompiled");
-@@ -1900,12 +1969,15 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -1900,12 +1966,15 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
      bus.io().set_ppu(&ppu);
      bus.io().set_bus(&bus);
  
@@ -3769,7 +3772,7 @@ index c5de5ac..fc774fd 100644
          }
          std::vector<uint8_t> save_bytes = bus.save().sram_enabled()
              ? bus.save().sram_bytes()
-@@ -1920,31 +1992,22 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -1920,31 +1989,22 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
          const std::string tmp = args.save_path + ".tmp";
          if (!write_file(tmp, save_bytes, &err)) {
              std::fprintf(stderr, "[gbarecomp:runtime] %s\n", err.c_str());
@@ -3810,7 +3813,7 @@ index c5de5ac..fc774fd 100644
      };
  
      set_active_bus(&bus);
-@@ -2077,6 +2140,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -2077,6 +2137,12 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
              uint32_t n = runtime_swi_log_save_file(sl);
              std::printf("swi_log_saved path=\"%s\" records=%u\n", sl, n);
          }
@@ -4243,7 +4246,7 @@ index d60ca8e..8268f0c 100644
  };
  
  // Per-game built-in defaults baked into a game runner at compile time.
-@@ -41,8 +45,13 @@ struct ExtendedViewFrameInfo {
+@@ -41,8 +45,14 @@ struct ExtendedViewFrameInfo {
  // constants from GbaBios, empty ROM hash that forces the user to
  // provide --config or --rom-sha1).
  struct RunOptions {
@@ -4252,6 +4255,7 @@ index d60ca8e..8268f0c 100644
      const char*   builtin_game_name = nullptr;
      const char*   builtin_rom_sha1  = nullptr;
 +    const char*   alt_rom_sha1      = nullptr;  // optional secondary verified ROM SHA-1 (e.g. HQ Sound Mixing Mod)
++    bool (*rom_post_load_hook)(std::uint8_t*, std::size_t, const char*) = nullptr;
 +    bool allow_rom_sha1_mismatch = false;  // mismatched cartridges always use the interpreter
 +    int runtime_menu_scancode = 41;  // SDL Escape; games may select F11 (68)
      std::uint32_t builtin_rom_crc32 = 0;

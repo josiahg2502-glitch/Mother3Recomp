@@ -34,13 +34,11 @@ Option 2 (Manual / External Patchers):
   4. In "config.ini", ensure "skip_launcher = 1" is set under [Launcher].
   5. Run "Play Mother 3.cmd" (or Mother3Recomp.exe).
 
-IMPORTANT NOTE ABOUT THE BUILT-IN LAUNCHER:
--------------------------------------------
-The launcher's "ROM Patch" checkbox is designed ONLY for applying the official
-fan translation patch ("mother3.ups") to a clean Japanese cartridge. It checks
-that the output matches the vanilla English v1.3 hash.
-Do NOT select "mother3_hq_sound_mixing.ups" in the launcher's "ROM Patch" field,
-as the launcher will reject the modified audio hash. Use Option 1 or 2 above instead!
+BUILT-IN MOTHER3RECOMP SUPPORT:
+------------------------------
+Mother3Recomp applies the HQ mixer in memory after the selected language patch,
+including supported fan translations. It does not modify the user's ROM file.
+The standalone UPS patch above remains for use with other emulators.
 
 Compatibility & Hashes:
 -----------------------

@@ -4,6 +4,7 @@
 #include <cstring>
 #include "runtime_arm.h"
 #include "mother3_runtime_hooks.h"
+#include "hq_audio_mixer_data.h"
 
 namespace {
 
@@ -44,20 +45,21 @@ bool ram_matches_rom(uint32_t ram, uint32_t rom, uint32_t size) {
     return true;
 }
 
-// Detect ipatix's m4a_hq_mixer at 0x03001C00..0x0300247C (installed by the
-// High-Quality Sound Mixing Mod). Its prologue at 0x03001C00 is:
+// Detect ipatix's mixer at either the Japanese or fan-translation load address.
+// Its prologue is:
 //   7943 (ldrb r3, [r0, #5])
 //   089B (lsrs r3, r3, #2)
 //   D040 (beq clear_buffer)
 //   A101 (adr r1, do_reverb)
-constexpr uint32_t kHqMixerStart = 0x03001C00u;
-constexpr uint32_t kHqMixerEnd   = 0x0300247Cu;
+constexpr uint32_t kHqMixerJapaneseStart = 0x03001B60u;
+constexpr uint32_t kHqMixerFanStart      = 0x03001C00u;
+constexpr uint32_t kHqMixerSize          = 0x087Cu;
 constexpr uint32_t kHqMixerSig0  = 0x089B7943u;
 constexpr uint32_t kHqMixerSig1  = 0xA101D040u;
 
-bool is_hq_mixer_present() {
-    return bus_read_u32(kHqMixerStart) == kHqMixerSig0 &&
-           bus_read_u32(kHqMixerStart + 4u) == kHqMixerSig1;
+bool is_hq_mixer_present(uint32_t start) {
+    return bus_read_u32(start) == kHqMixerSig0 &&
+           bus_read_u32(start + 4u) == kHqMixerSig1;
 }
 
 bool hq_mixer_interp_forced() {
@@ -74,7 +76,7 @@ bool hq_mixer_interp_forced() {
 // Executes the complete mixer pass in native host code, avoiding self-modifying
 // ARM instruction hazards (`runtime_created_routine` / `fixed_mixing_custom_routine`)
 // and Stage-2 TCC compilation stalls on the audio hot path.
-int run_hq_mixer_native() {
+int run_hq_mixer_native(uint32_t mixer_start) {
     const uint32_t sp = g_cpu.R[13];
     const uint32_t r0_in = g_cpu.R[0];  // gSoundInfo work area
     const uint32_t r4_in = g_cpu.R[4];  // pcmDmaCounter
@@ -84,11 +86,11 @@ int run_hq_mixer_native() {
 
     if (r8_in == 0u || r8_in > 0x400u || (r8_in & 7u) != 0u) return 0;
 
-    const uint32_t hq_buf = bus_read_u32(0x03001D84u);
+    const uint32_t hq_buf = bus_read_u32(mixer_start + 0x184u);
     if (hq_buf < 0x03000000u || hq_buf + r8_in * 4u > 0x03008000u) return 0;
 
-    // Mirror adsr_setup: store buffer length to hq_buffer_length_label (0x03001D88).
-    bus_write_u32(0x03001D88u, r8_in);
+    // Mirror adsr_setup's write to hq_buffer_length_label.
+    bus_write_u32(mixer_start + 0x188u, r8_in);
 
     // Local 32-bit stereo accumulation buffer (mirrors hq_buf in IWRAM).
     uint32_t mix_buf[0x400];
@@ -529,15 +531,19 @@ int run_hq_mixer_native() {
 }
 
 // Guard self-modifying RAM regions from stale AOT or Stage-2 overlay DLL freezing:
-// 1. 0x03001C00..0x0300247C: ipatix's m4a_hq_mixer modifies its own instructions
-//    in IWRAM (`runtime_created_routine` and `fixed_mixing_custom_routine`).
-//    Entry at 0x03001C00 uses run_hq_mixer_native() unless MOTHER3_HQ_MIXER_INTERP=1;
+// 1. The Japanese and fan-translation mixer ranges modify their own IWRAM code.
+//    The entry uses run_hq_mixer_native() unless MOTHER3_HQ_MIXER_INTERP=1;
 //    any interior PC (or forced interp mode) uses the reference interpreter bridge.
 // 2. 0x03000000..0x03000400: static AOT holds vanilla SoundMainRAM, which the
 //    HQ Sound Mixing Mod repurposes as `hq_buffer` (16-bit audio sample buffer).
 int force_interp_mutable_ram(uint32_t pc, int thumb) {
-    if (pc >= kHqMixerStart && pc < kHqMixerEnd && is_hq_mixer_present()) {
-        if (pc == kHqMixerStart && thumb && !hq_mixer_interp_forced()) {
+    const uint32_t mixer_start =
+        (pc >= kHqMixerJapaneseStart && pc < kHqMixerJapaneseStart + kHqMixerSize)
+            ? kHqMixerJapaneseStart
+            : ((pc >= kHqMixerFanStart && pc < kHqMixerFanStart + kHqMixerSize)
+                ? kHqMixerFanStart : 0u);
+    if (mixer_start && is_hq_mixer_present(mixer_start)) {
+        if (pc == mixer_start && thumb && !hq_mixer_interp_forced()) {
             return 0;  // Handled by run_hq_mixer_native() in dispatch_flash_ram_variant
         }
         return 1;
@@ -554,12 +560,13 @@ int force_interp_mutable_ram(uint32_t pc, int thumb) {
 // reuses overlapping slots), so address-only dispatch cannot identify them.
 // Match the live RAM words against the ROM templates (with a 1-instruction PC
 // pre-filter and a 1-slot MRU cache) and run the template's AOT code at the
-// equivalent offset. Also dispatches the HQ Sound Mixing Mod at 0x03001C00.
+// equivalent offset. Also dispatches both HQ mixer load addresses.
 int dispatch_flash_ram_variant(uint32_t pc, int thumb) {
     if (!thumb) return 0;
 
-    if (pc == kHqMixerStart && !hq_mixer_interp_forced() && is_hq_mixer_present()) {
-        if (run_hq_mixer_native()) return 1;
+    if ((pc == kHqMixerJapaneseStart || pc == kHqMixerFanStart) &&
+        !hq_mixer_interp_forced() && is_hq_mixer_present(pc)) {
+        if (run_hq_mixer_native(pc)) return 1;
     }
 
     const uint16_t insn_at_pc = bus_read_u16(pc);
@@ -596,6 +603,87 @@ int dispatch_flash_ram_variant(uint32_t pc, int thumb) {
 }
 
 }  // namespace
+
+bool mother3_apply_hq_audio_patch(std::uint8_t* rom, std::size_t rom_size,
+                                  const char* source_sha1) {
+    constexpr std::size_t kRomLength = 0x02000000;
+    constexpr std::size_t kMixerOffset = 0x01B0C140;
+    constexpr std::size_t kMixerSize = 0x087C;
+    constexpr std::uint32_t kVanillaMixerRom = 0x0808ED81;
+    constexpr std::uint32_t kHqMixerRom = 0x09B0C141;
+    static_assert(sizeof(kHqAudioMixer) == kMixerSize);
+    if (!rom || rom_size != kRomLength || std::memcmp(rom + 0xAC, "A3UJ", 4) != 0)
+        return false;
+
+    auto read32 = [rom](std::size_t offset) {
+        return static_cast<std::uint32_t>(rom[offset]) |
+               (static_cast<std::uint32_t>(rom[offset + 1]) << 8) |
+               (static_cast<std::uint32_t>(rom[offset + 2]) << 16) |
+               (static_cast<std::uint32_t>(rom[offset + 3]) << 24);
+    };
+    auto write32 = [rom](std::size_t offset, std::uint32_t value) {
+        for (unsigned i = 0; i < 4; ++i)
+            rom[offset + i] = static_cast<std::uint8_t>(value >> (i * 8));
+    };
+    auto write16 = [rom](std::size_t offset, std::uint16_t value) {
+        rom[offset] = static_cast<std::uint8_t>(value);
+        rom[offset + 1] = static_cast<std::uint8_t>(value >> 8);
+    };
+
+    const std::uint32_t mixer_rom = read32(0x8F9EC);
+    const std::uint32_t mixer_cpu = read32(0x8F9F0);
+    const std::uint16_t mixer_units = static_cast<std::uint16_t>(rom[0x8F9F4]) |
+        (static_cast<std::uint16_t>(rom[0x8F9F5]) << 8);
+    if (mixer_rom == kHqMixerRom && mixer_units == 0x021F &&
+        (mixer_cpu == 0x03001B60 || mixer_cpu == 0x03001C00))
+        return false; // Already patched.
+
+    // Refuse modified mixer layouts rather than overwrite an unknown ROM hack.
+    if (mixer_rom != kVanillaMixerRom || mixer_cpu != 0x03000000 ||
+        mixer_units != 0x0100 || read32(0x8F9F8) != 0x03001B20 ||
+        read32(0x8ED70) != 0x03000001 || read32(0x69314) != 0x02001084 ||
+        read32(0x69434) != 0x02001084)
+        return false;
+
+    const std::uint8_t free_byte = rom[kMixerOffset];
+    if (free_byte != 0 && free_byte != 0xFF)
+        return false;
+    for (std::size_t i = 1; i < kMixerSize; ++i)
+        if (rom[kMixerOffset + i] != free_byte)
+            return false;
+
+    const bool japanese = source_sha1 &&
+        std::strcmp(source_sha1, "4f0f493e12c2a8c61b2d809af03f7abf87a85776") == 0;
+    std::memcpy(rom + kMixerOffset, kHqAudioMixer, sizeof(kHqAudioMixer));
+    write32(0x8F9EC, kHqMixerRom);
+    write16(0x8F9F4, 0x021F);
+    if (japanese) {
+        write32(0x8F9F0, 0x03001B60);
+        write32(0x8F9F8, 0x0203E000);
+        write32(0x8ED70, 0x03001B61);
+        constexpr std::uint32_t players[] = {
+            0x030023F0, 0x03002710, 0x03002A30, 0x03000B20, 0x03000C60,
+            0x03000EE0, 0x03001020, 0x03001520, 0x030017A0, 0x03001840
+        };
+        for (std::size_t i = 0; i < sizeof(players) / sizeof(players[0]); ++i)
+            write32(0x120E20 + i * 12, players[i]);
+    } else {
+        write32(0x69314, 0x02005230);
+        write32(0x69434, 0x02005230);
+        write32(0x8F9F0, 0x03001C00);
+        write32(0x8F9F8, 0x03000C50);
+        write32(0x8ED70, 0x03001C01);
+        constexpr std::uint32_t players[] = {
+            0x03002490, 0x030027B0, 0x03000930, 0x02001090, 0x03000570,
+            0x030007F0, 0x020011D0, 0x030009D0, 0x030004D0, 0x020016D0
+        };
+        for (std::size_t i = 0; i < sizeof(players) / sizeof(players[0]); ++i)
+            write32(0x120E20 + i * 12, players[i]);
+    }
+    std::fprintf(stderr, "[mother3:hq-audio] built-in mixer applied (%s layout)\n",
+                 japanese ? "Japanese" : "fan translation");
+    return true;
+}
 
 void mother3_install_runtime_hooks() {
     g_runtime_ram_dispatch_hook = &dispatch_flash_ram_variant;

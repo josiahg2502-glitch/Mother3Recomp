@@ -42,6 +42,15 @@ add_executable(Mother3Recomp
     src/mother3_runtime_hooks.cpp
     ${GAME_GENERATED_SOURCES})
 
+# Embed only the HQ mixer code; the ROM itself is patched in memory after the
+# user's selected language patch has been applied.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/mods/High-Quality Sound Mixing/source/m4a_hq_mixer_no_fix.bin" HQ_AUDIO_MIXER_HEX HEX)
+string(REGEX REPLACE "(..)" "0x\\1," HQ_AUDIO_MIXER_BYTES "${HQ_AUDIO_MIXER_HEX}")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/hq_audio_mixer_data.h"
+    "#pragma once\n#include <cstdint>\nstatic constexpr std::uint8_t kHqAudioMixer[] = {${HQ_AUDIO_MIXER_BYTES}};\n")
+target_include_directories(Mother3Recomp PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+
 set(GAME_RECOMPILED_SOURCES ${GAME_GENERATED_SOURCES})
 list(FILTER GAME_RECOMPILED_SOURCES INCLUDE REGEX
     "/recompiled_[0-9]+\\.cpp$")

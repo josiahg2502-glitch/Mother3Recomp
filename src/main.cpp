@@ -80,23 +80,22 @@ int main(int argc, char** argv) {
     opts.allow_rom_sha1_mismatch = true;
     opts.alt_rom_sha1 = kHqAudioSha1;
     opts.runtime_menu_scancode = 68;  // F11; Escape remains the exit key.
-    opts.launcher_region = "Japan + English patch";
+    opts.launcher_region = "Japan + fan translations";
     opts.launcher_boxart = "assets/img/boxart_mother3.tga";  // original art, no Nintendo assets
     opts.launcher_game_config = "game.toml";
     opts.launcher_save_path = "saves/mother3_en_v13.sav";
     opts.launcher_expose_widescreen = false;
     opts.launcher_expose_adaptive_view = false;
     opts.widescreen_view_width = 284;
-    // Clean Japanese cartridge + fan translation patch -> verified English image;
-    // or English v1.3 cartridge + HQ Sound Mixing UPS -> verified HQ Audio image.
+    // Apply HQ audio in memory after the selected language patch is loaded.
     opts.launcher_enable_rom_patches = true;
     opts.launcher_source_rom_sha1 = kJapanSha1;
     opts.launcher_required_patch_sha1 = nullptr;
-    opts.launcher_accept_patched_rom = true;   // existing English v1.3 or HQ Audio ROM works directly
+    opts.launcher_accept_patched_rom = true;   // supported patched language images work directly
+    opts.rom_post_load_hook = &mother3_apply_hq_audio_patch;
     opts.launcher_rom_patch_note =
-        "Apply an IPS, IPS32, BPS or UPS fan patch to the clean Japanese ROM. "
-        "Unrecognized outputs use the compatibility interpreter. English v1.3 "
-        "and its HQ Audio variant use the native corpus.";
+        "HQ Audio is built in and applied to supported Japanese and fan-translated ROMs. "
+        "IPS, IPS32, BPS or UPS language patches can be selected here.";
 
     // PC conveniences: rewind + fast-forward, save states, sharper scaling.
     opts.expose_assist_tools = true;

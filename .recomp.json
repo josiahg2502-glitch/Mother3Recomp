@@ -19,5 +19,5 @@
     "region": "Japan",
     "sha1": "4f0f493e12c2a8c61b2d809af03f7abf87a85776"
   },
-  "notes": "Fan language patches, including Spanish, are supported; compatibility and performance vary. Supply your own ROM; BIOS is optional on Android. Android has separate controls for system bars, display fill and on-screen buttons. Device-specific Android performance remains under investigation."
+  "notes": "Fan language patches, including Spanish, are supported; built-in HQ audio applies to Japanese and compatible fan-translation sound layouts. Compatibility and performance vary. Supply your own ROM; BIOS is optional on Android. Android has separate controls for system bars, display fill and on-screen buttons. Device-specific Android performance remains under investigation."
 }
