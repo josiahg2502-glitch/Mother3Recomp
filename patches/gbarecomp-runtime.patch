@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 5b6511a..59f5968 100644
+index 5b6511a..7452e7e 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -253,8 +253,13 @@ set_property(TARGET gbarecomp_recompile_core PROPERTY POSITION_INDEPENDENT_CODE
@@ -34,6 +34,22 @@ index 5b6511a..59f5968 100644
      src/debug/snapshot.cpp
      src/debug/mod_state.cpp
      src/debug/ws_provenance.cpp
+@@ -900,12 +909,14 @@ add_executable(codegen_tests
+     tests/codegen/test_cases.cpp
+     tests/codegen/overlay_runtime_compile_smoke.cpp
+     tests/codegen/stubs.cpp
++    src/gba/gba_waitstates.cpp
+     ${CODEGEN_TESTS_GENFILE}
+ )
+ target_include_directories(codegen_tests PRIVATE
+     tests/codegen
+     src/runtime
+-    src/armv4t)
++    src/armv4t
++    src/gba)
+ target_link_libraries(codegen_tests PRIVATE gbarecomp_armv4t)
+ add_test(NAME codegen_tests COMMAND codegen_tests)
+ 
 diff --git a/external/arm-recomp-core b/external/arm-recomp-core
 index 763b922..1f13cdf 160000
 --- a/external/arm-recomp-core
@@ -10456,3 +10472,118 @@ diff --git a/platform/android/java/org/gbarecomp/GbaSetupActivity.java b/platfor
              LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
          return page;
      }
+diff --git a/tests/codegen/stubs.cpp b/tests/codegen/stubs.cpp
+index 2aeda1b..7af5d20 100644
+--- a/tests/codegen/stubs.cpp
++++ b/tests/codegen/stubs.cpp
+@@ -22,9 +22,24 @@
+ #include <vector>
+ 
+ #include "arm_ir.h"
++#include "gba_waitstates.h"
+ #include "runtime_arm.h"
+ #include "stubs.h"
+ 
++// Generated code reads the cartridge wait table (runtime_wait_inline.h);
++// outside the runtime library the tests own it, at power-on values.
++static RuntimeWaitTable power_on_waits() {
++    RuntimeWaitTable t{};
++    gba::waits_reset(t);
++    return t;
++}
++// Declared extern "C" in runtime_arm.h.
++RuntimeWaitTable g_runtime_waits = power_on_waits();
++
++namespace codegen_test {
++RuntimeWaitTable& g_waits = g_runtime_waits;
++}  // namespace codegen_test
++
+ namespace {
+ 
+ // Single bus shared across all test cases. The runner calls
+diff --git a/tests/codegen/stubs.h b/tests/codegen/stubs.h
+index 762b3f3..5e0974a 100644
+--- a/tests/codegen/stubs.h
++++ b/tests/codegen/stubs.h
+@@ -5,8 +5,15 @@
+ 
+ #include <cstdint>
+ 
++#include "runtime_arm_types.h"
++
+ namespace codegen_test {
+ 
++// Wait-state table shared by both sides of the diff: generated code reads it
++// through g_runtime_waits, the interpreter's FlatBus through code_wait /
++// prefetch_stall. The runner resets it to power-on values before each case.
++extern RuntimeWaitTable& g_waits;
++
+ // Re-seed the singleton bus before each test. `size` bytes starting
+ // at `base`. Also resets dispatch / SWI / unimplemented recorders.
+ void bus_reset(uint32_t base, uint32_t size);
+diff --git a/tests/codegen/test_main.cpp b/tests/codegen/test_main.cpp
+index 962b894..9d469b3 100644
+--- a/tests/codegen/test_main.cpp
++++ b/tests/codegen/test_main.cpp
+@@ -29,6 +29,7 @@
+ #include "interpreter.h"
+ #include "overlay_abi.h"
+ #include "runtime_arm.h"
++#include "gba_waitstates.h"
+ #include "stubs.h"
+ #include "test_cases.h"
+ #include "thumb_decode.h"
+@@ -49,6 +50,16 @@ struct FlatBus : armv4t::Bus {
+     FlatBus(std::size_t size, uint32_t base_addr)
+         : mem(size, 0), base(base_addr) {}
+ 
++    // Fetch waits and prefetch come from the same table the generated side
++    // reads through g_runtime_waits (stubs.cpp), as the real GbaBus and the
++    // runtime share one wait table.
++    uint32_t code_wait(uint32_t pc, bool thumb, bool seq) const override {
++        return gba::waits_code(codegen_test::g_waits, pc, thumb, seq);
++    }
++    int32_t prefetch_stall(int32_t wait, uint32_t pc, bool thumb) override {
++        return gba::waits_prefetch_stall(codegen_test::g_waits, wait, pc, thumb);
++    }
++
+     bool in(uint32_t addr, std::size_t w) {
+         if (addr < base) return false;
+         std::size_t off = addr - base;
+@@ -419,6 +430,7 @@ void diff_state(const TestCase& tc,
+ // ── Main per-case runner ───────────────────────────────────────────
+ 
+ bool run_case(const TestCase& tc, std::size_t idx) {
++    gba::waits_reset(codegen_test::g_waits);  // power-on WAITCNT
+     BusGeom geom = default_bus_geom();
+     if (tc.mem_size) {
+         geom = BusGeom{tc.mem_base, tc.mem_size};
+@@ -440,8 +452,10 @@ bool run_case(const TestCase& tc, std::size_t idx) {
+ 
+     uint32_t saved_pc = cpu_interp.R[15];
+     uint32_t interp_cycles = 0;
++    const RuntimeWaitTable waits_before = codegen_test::g_waits;
+     auto r = armv4t::Interpreter::step(cpu_interp, bus_interp, ins,
+                                        &interp_cycles);
++    codegen_test::g_waits = waits_before;  // recomp starts from the same state
+     if (r == armv4t::Interpreter::Result::NotImplemented) {
+         std::printf("FAIL [%zu] %s: interpreter NotImplemented for "
+                     "this instruction shape — fix the interpreter or "
+diff --git a/tests/ppu_smoke/test_main.cpp b/tests/ppu_smoke/test_main.cpp
+index 198b217..6613dc2 100644
+--- a/tests/ppu_smoke/test_main.cpp
++++ b/tests/ppu_smoke/test_main.cpp
+@@ -328,9 +328,10 @@ void test_extended_view_capability_policy() {
+         std::fprintf(stderr, "opted-in 480x160 geometry mismatch\n");
+         std::exit(1);
+     }
+-    g = resolve_view_geometry(600, 600, false, kEngineMax);
+-    if (g.width != 576 || g.extra_left != 168 || g.extra_right != 168) {
+-        std::fprintf(stderr, "576x160 engine capacity was not enforced\n");
++    // Engine capacity is GbaPpu::kMaxRenderWidth (896: kMaxExtraX = 328).
++    g = resolve_view_geometry(1000, 1000, false, kEngineMax);
++    if (g.width != 896 || g.extra_left != 328 || g.extra_right != 328) {
++        std::fprintf(stderr, "896x160 engine capacity was not enforced\n");
+         std::exit(1);
+     }
+     g = resolve_view_geometry(288, 240, true, kEngineMax);
