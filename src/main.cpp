@@ -269,6 +269,20 @@ Java_org_gbarecomp_GbaNative_applyRomPatch(JNIEnv* env, jclass, jbyteArray sourc
 }
 
 extern "C" int SDL_main(int argc, char** argv) {
+#if defined(MOTHER3_TUNE_RG556)
+    // Anbernic RG556 preset (build option MOTHER3_TUNE_RG556). Its Unisoc T820
+    // grants OpenSL ES the low-latency path, so the Java AudioTrack fallback
+    // chosen below for other phones is not needed; battle combos are timed to
+    // the music, so the audio cushion is trimmed too. The game thread stays
+    // on the Cortex-A76 cluster instead of drifting to a Cortex-A55, where
+    // frames arrive late. setenv(..., 0) keeps any value from the environment,
+    // and an SDL_AUDIODRIVER variable outranks the SDL_SetHint() default.
+    setenv("SDL_AUDIODRIVER", "openslES", 0);
+    setenv("GBARECOMP_AUDIO_SAMPLES", "512", 0);
+    setenv("GBARECOMP_AUDIO_TARGET_MS", "40", 0);
+    setenv("GBARECOMP_AUDIO_PREROLL_MS", "120", 0);
+    setenv("GBARECOMP_BIG_CORES", "1", 0);
+#endif
     // The generated guest calls need a deeper stack than SDLActivity's thread.
     const int result = gbarecomp::mobile_run_with_stack(mother3_main, argc, argv);
     if (std::FILE* status = std::fopen("android-exit-code", "w")) {  // read by the setup Activity

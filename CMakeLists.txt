@@ -120,6 +120,11 @@ else()
         "-Wl,--end-group")
 endif()
 
+option(MOTHER3_TUNE_RG556 "Anbernic RG556 preset: OpenSL ES, smaller audio cushion, big cores" OFF)
+if(MOTHER3_TUNE_RG556)
+    target_compile_definitions(${MOTHER3_TARGET} PRIVATE MOTHER3_TUNE_RG556)
+endif()
+
 target_compile_definitions(${MOTHER3_TARGET} PRIVATE
     GBARECOMP_DEFAULT_DEBUG_PORT=19893
     GBARECOMP_WINDOW_TITLE="Mother3Recomp"
