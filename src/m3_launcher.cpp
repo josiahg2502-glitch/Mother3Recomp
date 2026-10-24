@@ -252,7 +252,7 @@ struct Pads {
 enum class Page { Main, Settings, Controls, Mods };
 const char* const kItems[] = {"Play", "Settings", "Controls", "Mods", "Quit"};
 constexpr int kItemCount = 5;
-constexpr int kSettingRows = 10;  // 9 options + Change game files
+constexpr int kSettingRows = 11;  // 10 options + Change game files
 constexpr int kControlRows = m3settings::kButtonCount + 1;  // buttons + Reset
 
 // Smooth motion only shows on a display of 100 Hz or more (m3_smooth.cpp).
@@ -372,6 +372,7 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
             case 6: st.prompt_style = (st.prompt_style + 5 + delta) % 5; break;
             case 7: st.widescreen = !st.widescreen; break;
             case 8: st.smooth = (st.smooth + 3 + delta) % 3; break;
+            case 9: st.hq_audio = !st.hq_audio; break;
         }
     };
 
@@ -502,12 +503,13 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
                 st.sharp_filter ? "Sharp" : "Pixel", "", std::to_string(st.volume) + "%",
                 kPromptStyles[st.prompt_style], st.widescreen ? "On (16:9)" : "Off",
                 st.smooth == 2 ? "120 (always)" : !st.smooth ? "60"
-                : display_hz(win) >= 100 || display_hz(win) == 0 ? "120 (smooth)" : "120 (needs 120 Hz)", ""};
+                : display_hz(win) >= 100 || display_hz(win) == 0 ? "120 (smooth)" : "120 (needs 120 Hz)",
+                st.hq_audio ? "On" : "Off", ""};
             const char* labels[kSettingRows] = {"Window flavor", "Display", "Window size", "Scaling",
                                                 "Screen colors", "Volume", "Button prompts", "Widescreen",
-                                                "Frame rate", "Change game files (ROM, BIOS)"};
+                                                "Frame rate", "HQ audio", "Change game files (ROM, BIOS)"};
             for (int i = 0; i < kSettingRows; ++i) {
-                const int y = kPy + 8 + i * 11;
+                const int y = kPy + 8 + i * 10;  // 11 rows: same pitch as Controls
                 if (i == row) ui.cursor(kLabelX - 10, y + 4);
                 ui.text(labels[i], kLabelX, y);
                 std::string v = values[i];

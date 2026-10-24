@@ -1,4 +1,4 @@
-// Mother3Recomp â€” native host for the statically recompiled
+// Mother3Recomp — native host for the statically recompiled
 // MOTHER 3 (A3UJ) + MOTHER 3 Fan Translation v1.3 (English) and
 // High-Quality Sound Mixing Mod (m4a_hq_mixer).
 #include <cstdint>

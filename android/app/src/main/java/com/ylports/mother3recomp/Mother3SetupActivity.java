@@ -84,6 +84,14 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             setIniValue("Launcher", "m3_widescreen", checked ? "1" : "0"));
         preferences.addView(widescreen);
 
+        android.widget.Switch hqAudio = new android.widget.Switch(this);
+        hqAudio.setText("HQ audio (changes the game's RNG; off for speedruns)");
+        styleOption(hqAudio);
+        hqAudio.setChecked(!"0".equals(iniValue("Launcher", "m3_hq_audio")));
+        hqAudio.setOnCheckedChangeListener((view, checked) ->
+            setIniValue("Launcher", "m3_hq_audio", checked ? "1" : "0"));
+        preferences.addView(hqAudio);
+
         android.widget.Button prompts = new android.widget.Button(this);
         int style = 0;
         try { style = Integer.parseInt(iniValue("Launcher", "m3_button_prompts")); }

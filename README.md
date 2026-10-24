@@ -50,7 +50,7 @@ Everything in these pictures is drawn from the player's own ROM; none of it ship
 Released and actively maintained. Project metadata follows the [recomp.board outline](https://recomp.fyi/spec) in [`.recomp.json`](.recomp.json).
 
 Language patches include Spanish; compatibility and speed vary by patch.
-HQ Audio mixing is built in and applies automatically to the Japanese ROM and supported fan translations.
+HQ Audio mixing is built in and applies automatically to the Japanese ROM and supported fan translations. It changes the game's RNG and moves sound buffers in RAM, so it can be turned off under Settings > HQ audio (Android: the HQ audio switch) for speedruns or RAM tools.
 Android has separate controls for system bars, display fill and on-screen buttons. Device-specific performance reports remain under investigation.
 
 [Building from source](docs/BUILDING.md) · [Android source](android/) · [Credits](CREDITS.md) · [License](LICENSE)
