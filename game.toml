@@ -168,3 +168,16 @@ note = "Literal pool 0x08032F84/0x08032F88; verified in long Chapter 1 reference
 addr = 0x03004D14
 mode = "thumb"
 name = "field_iwram_routine_2_entry"
+
+# Widescreen: the field culls actors against the native 240x160 view through
+# these two overlap tests (rect, pos, size). src/m3_widescreen.cpp answers them
+# against the widened view while widescreen is on.
+[[mod_function_hook]]
+addr = 0x080357D0
+mode = "thumb"
+note = "actor box vs view rect overlap (widescreen culling)"
+
+[[mod_function_hook]]
+addr = 0x08035820
+mode = "thumb"
+note = "actor box vs view rect overlap, looping maps (widescreen culling)"
