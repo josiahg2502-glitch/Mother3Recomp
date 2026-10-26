@@ -1140,7 +1140,7 @@ index 42208db..4a15227 100644
      bool raised_timer_res_ = false;
      // HP-002: Windows high-resolution waitable timer (HANDLE, void* here to
 diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
-index 496d741..abe36f4 100644
+index 496d741..4d1aa87 100644
 --- a/src/runtime/host_window.cpp
 +++ b/src/runtime/host_window.cpp
 @@ -23,6 +23,7 @@
@@ -1654,7 +1654,49 @@ index 496d741..abe36f4 100644
  void HostWindow::set_resize_driven_view(bool enabled) {
      if (!open_ || !impl_) return;
      auto* b = static_cast<Backend*>(impl_);
-@@ -2777,13 +2930,16 @@ void HostWindow::configure_touch(bool policy, std::uint32_t claims,
+@@ -2755,6 +2908,41 @@ void HostWindow::set_runtime_ui(RecompRuntimeUi* ui) {
+     if (!open_ || !impl_) return;
+     static_cast<Backend*>(impl_)->runtime_ui = ui;
+ }
++
++bool HostWindow::set_runtime_ui_font(const char* path) {
++    if (!open_ || !impl_ || !path) return false;
++    auto* b = static_cast<Backend*>(impl_);
++    if (!b->runtime_imgui_context) return false;
++    SDL_RWops* rw = SDL_RWFromFile(path, "rb");
++    const Sint64 size = rw ? SDL_RWsize(rw) : -1;
++    if (size <= 0 || size > (8 << 20)) {
++        if (rw) SDL_RWclose(rw);
++        std::fprintf(stderr, "host_window: runtime menu font %s unreadable; built-in font kept\n", path);
++        return false;
++    }
++    void* data = IM_ALLOC(static_cast<size_t>(size));
++    const size_t read = SDL_RWread(rw, data, 1, static_cast<size_t>(size));
++    SDL_RWclose(rw);
++    if (read != static_cast<size_t>(size)) {
++        IM_FREE(data);
++        return false;
++    }
++    ImGuiContext* previous = ImGui::GetCurrentContext();
++    ImGui::SetCurrentContext(b->runtime_imgui_context);
++    ImGuiIO& io = ImGui::GetIO();
++    // The built-in font is 13 px drawn at FontGlobalScale: rasterize this one
++    // at that final size instead, so it is sharp, and stop scaling.
++    ImFont* font = io.Fonts->AddFontFromMemoryTTF(data, static_cast<int>(size),
++                                                  13.0f * io.FontGlobalScale);  // the atlas owns data
++    if (font) {
++        io.FontDefault = font;
++        io.FontGlobalScale = 1.0f;
++        ImGui_ImplSDLRenderer2_DestroyFontsTexture();  // rebuilt with the new font on the next frame
++    }
++    ImGui::SetCurrentContext(previous);
++    std::fprintf(stderr, "host_window: runtime menu font %s %s\n", path, font ? "loaded" : "rejected");
++    return font != nullptr;
++}
+ #endif
+ 
+ void HostWindow::configure_touch(bool policy, std::uint32_t claims,
+@@ -2777,13 +2965,16 @@ void HostWindow::configure_touch(bool policy, std::uint32_t claims,
      if (!b->pad_choice_saved) {
          const bool platform_default =
  #if defined(__ANDROID__)
@@ -1673,7 +1715,7 @@ index 496d741..abe36f4 100644
      TouchHub& hub = TouchHub::instance();
      hub.set_claims(policy ? claims : 0);
      // A game that owns long-press gets a snappier threshold; the engine's own
-@@ -2809,7 +2965,8 @@ void HostWindow::set_touch_config_dir(const char* dir) {
+@@ -2809,7 +3000,8 @@ void HostWindow::set_touch_config_dir(const char* dir) {
      ini_scan_section((b->touch_config_dir + "/config.ini").c_str(), "Touch",
                       [b](const char* key, const char* val) {
          if (SDL_strcasecmp(key, "pad_visible") == 0) {
@@ -1683,7 +1725,7 @@ index 496d741..abe36f4 100644
              b->pad_choice_saved = true;
          } else if (SDL_strcasecmp(key, "toggle_x") == 0) {
              b->toggle_fx = std::clamp(static_cast<float>(std::atof(val)), 0.0f, 1.0f);
-@@ -2819,6 +2976,13 @@ void HostWindow::set_touch_config_dir(const char* dir) {
+@@ -2819,6 +3011,13 @@ void HostWindow::set_touch_config_dir(const char* dir) {
              b->toggle_pos_saved = true;
          }
      });
@@ -1697,7 +1739,7 @@ index 496d741..abe36f4 100644
      ini_scan_section((b->touch_config_dir + "/config.ini").c_str(), "Audio",
                       [b](const char* key, const char* val) {
          if (SDL_strcasecmp(key, "enhanced") == 0) {
-@@ -2828,6 +2992,22 @@ void HostWindow::set_touch_config_dir(const char* dir) {
+@@ -2828,6 +3027,22 @@ void HostWindow::set_touch_config_dir(const char* dir) {
      });
  }
  
@@ -1720,7 +1762,7 @@ index 496d741..abe36f4 100644
  bool HostWindow::saved_audio_enhanced(bool& enabled) const {
      if (!open_ || !impl_) return false;
      auto* b = static_cast<const Backend*>(impl_);
-@@ -2853,9 +3033,12 @@ void HostWindow::set_touch_pad_visible(bool visible) {
+@@ -2853,9 +3068,12 @@ void HostWindow::set_touch_pad_visible(bool visible) {
      if (!open_ || !impl_) return;
      auto* b = static_cast<Backend*>(impl_);
      visible = visible && b->touch_controls;
@@ -1735,7 +1777,7 @@ index 496d741..abe36f4 100644
      // Any finger currently on a pad button is released with the pad.
      for (auto& t : b->touches)
          if (t.active && t.pad) t.buttons = 0;
-@@ -3011,7 +3194,7 @@ HostWindow::Events HostWindow::pump() {
+@@ -3011,7 +3229,7 @@ HostWindow::Events HostWindow::pump() {
              ImGui::SetCurrentContext(b->runtime_imgui_context);
              ImGui_ImplSDL2_ProcessEvent(&e);
          }
@@ -1744,7 +1786,7 @@ index 496d741..abe36f4 100644
  #endif
          if (e.type == SDL_QUIT) {
              ev.quit = true;
-@@ -3025,12 +3208,17 @@ HostWindow::Events HostWindow::pump() {
+@@ -3025,12 +3243,17 @@ HostWindow::Events HostWindow::pump() {
              ev.terminating = true;
              ev.quit = true;
          } else if (e.type == SDL_CONTROLLERDEVICEADDED) {
@@ -1763,7 +1805,7 @@ index 496d741..abe36f4 100644
              }
          } else if (e.type == SDL_WINDOWEVENT &&
                     e.window.event == SDL_WINDOWEVENT_CLOSE) {
-@@ -3225,25 +3413,70 @@ HostWindow::Events HostWindow::pump() {
+@@ -3225,25 +3448,70 @@ HostWindow::Events HostWindow::pump() {
      // inputs. Keyboard and controller are additive so either can be used at
      // any time, including while testing motion.
      if (b->controller && SDL_GameControllerGetAttached(b->controller)) {
@@ -1852,7 +1894,7 @@ index 496d741..abe36f4 100644
      }
      if (b->touch_controls) {
          const uint16_t touch_buttons = active_touch_buttons(b);
-@@ -3369,6 +3602,7 @@ bool HostWindow::drawable_size(int* /*width*/, int* /*height*/) const {
+@@ -3369,6 +3637,7 @@ bool HostWindow::drawable_size(int* /*width*/, int* /*height*/) const {
  
  void HostWindow::present(const uint8_t* /*rgb888*/) {}
  void HostWindow::present(const uint8_t*, unsigned, unsigned) {}
@@ -1860,7 +1902,7 @@ index 496d741..abe36f4 100644
  
  void HostWindow::load_input_config(const char* /*dir*/,
                                     bool /*assist_tools_default*/,
-@@ -3381,10 +3615,15 @@ int  HostWindow::volume() const { return 100; }
+@@ -3381,13 +3650,19 @@ int  HostWindow::volume() const { return 100; }
  int  HostWindow::window_scale() const { return 1; }
  void HostWindow::set_linear_filter(bool /*enabled*/) {}
  bool HostWindow::linear_filter() const { return false; }
@@ -1876,11 +1918,15 @@ index 496d741..abe36f4 100644
  void HostWindow::set_resize_driven_view(bool /*enabled*/) {}
  #if defined(GBARECOMP_RUNTIME_UI)
  void HostWindow::set_runtime_ui(RecompRuntimeUi* /*ui*/) {}
++bool HostWindow::set_runtime_ui_font(const char* /*path*/) { return false; }
+ #endif
+ void HostWindow::configure_touch(bool /*policy*/, std::uint32_t /*claims*/,
+                                  int /*pad_default*/, bool /*emulate_touch*/) {}
 diff --git a/src/runtime/host_window.h b/src/runtime/host_window.h
-index 073ef16..1df939b 100644
+index 073ef16..7d9b581 100644
 --- a/src/runtime/host_window.h
 +++ b/src/runtime/host_window.h
-@@ -103,9 +103,18 @@ public:
+@@ -103,13 +103,25 @@ public:
      // false until the player has chosen.
      bool saved_audio_enhanced(bool& enabled) const;
      void save_audio_enhanced(bool enabled);
@@ -1899,7 +1945,14 @@ index 073ef16..1df939b 100644
  #if defined(GBARECOMP_RUNTIME_UI)
      // Attach the capability-only shared model. HostWindow presents it through
      // Dear ImGui's SDL_Renderer2 backend over the existing game renderer.
-@@ -159,6 +168,10 @@ public:
+     void set_runtime_ui(RecompRuntimeUi* ui);
++    // Replaces the runtime menu's built-in ImGui font with a TrueType file
++    // (SDL_RWFromFile path); keeps the built-in one if it can't be read.
++    bool set_runtime_ui_font(const char* path);
+ #endif
+     // ---- touch (touch_input.h) ---------------------------------------------
+     // `policy` = the game consumes touch through RunOptions::input_frame;
+@@ -159,6 +171,10 @@ public:
      // The enhanced texture is uploaded and presented directly, without a
      // native-resolution intermediate render target.
      void present(const uint8_t* rgb888, unsigned width, unsigned height);
@@ -2043,7 +2096,7 @@ index 0b3379e..709a451 100644
      // Arm this thread's budget: keep kGuardMargin of headroom for the
      // runtime's own transient frames between two instruction-boundary
 diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
-index 1eb5011..3506a0c 100644
+index 1eb5011..2377d9c 100644
 --- a/src/runtime/runtime.cpp
 +++ b/src/runtime/runtime.cpp
 @@ -197,6 +197,9 @@ struct Args {
@@ -2261,6 +2314,15 @@ index 1eb5011..3506a0c 100644
          win.set_fps_readout(opts.show_fps_by_default);
  #if defined(GBARECOMP_RUNTIME_UI)
          runtime_ui_context.window = &win;
+@@ -3263,7 +3325,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+         RecompRuntimeUiStandardConfig runtime_ui_config{};
+         runtime_ui_config.menu.title = runtime_title;
+         runtime_ui_config.menu.subtitle = "Game Boy Advance runtime settings";
+-        runtime_ui_config.menu.theme = "gba";
++        runtime_ui_config.menu.theme = opts.runtime_ui_theme ? opts.runtime_ui_theme : "gba";
+ #if defined(RECOMP_RUNTIME_UI_HAS_PRESENTATION_FLAGS)
+         if (opts.ui_touch_friendly) {
+             runtime_ui_config.menu.presentation_flags |=
 @@ -3308,15 +3370,16 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  RECOMP_RUNTIME_UI_STANDARD_SAVE_STATE |
                  RECOMP_RUNTIME_UI_STANDARD_LOAD_STATE;
@@ -2314,7 +2376,15 @@ index 1eb5011..3506a0c 100644
          if (opts.ui_extra_items && opts.ui_extra_item_count) {
              const auto* game_items =
                  static_cast<const RecompRuntimeUiItem*>(opts.ui_extra_items);
-@@ -3533,7 +3622,6 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -3458,6 +3547,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+         runtime_ui_context.ui =
+             recomp_runtime_ui_create_standard(&runtime_ui_config);
+         win.set_runtime_ui(runtime_ui_context.ui);
++        if (opts.runtime_ui_font) win.set_runtime_ui_font(opts.runtime_ui_font);
+ #endif
+         sync_resize_driven_view();
+         if (live_fb.empty()) live_fb.assign(ppu.render_bytes(), 0);
+@@ -3533,7 +3623,6 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
          return !opts.expose_assist_tools || win.assist_tools_enabled();
  #endif
      };
@@ -2322,7 +2392,7 @@ index 1eb5011..3506a0c 100644
      int fast_forward_multiplier = std::clamp(
          win.fast_forward_multiplier(), 2, 10);
      auto capture_rewind_point = [&]() {
-@@ -4904,6 +4992,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -4904,6 +4993,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
                  if (present_frame) present_live_frame();
                  // Framedump (capture runs only) is attributed to present_us.
                  if (framedump_dir && frame >= framedump_start &&
@@ -2331,7 +2401,7 @@ index 1eb5011..3506a0c 100644
                      char p[512];
                      std::snprintf(p, sizeof(p), "%s/f_%06llu.png", framedump_dir,
 diff --git a/src/runtime/runtime.h b/src/runtime/runtime.h
-index 7e086e4..87bf4a8 100644
+index 7e086e4..7d534a0 100644
 --- a/src/runtime/runtime.h
 +++ b/src/runtime/runtime.h
 @@ -50,6 +50,10 @@ struct RunOptions {
@@ -2369,7 +2439,19 @@ index 7e086e4..87bf4a8 100644
      // Gestures the game's policy owns (TouchClaim bits). An unclaimed
      // long-press still opens the runtime settings menu; a three-finger tap
      // always does.
-@@ -295,6 +316,9 @@ struct RunOptions {
+@@ -259,6 +280,11 @@ struct RunOptions {
+     // near-full-screen panels, larger hit targets, and touch-oriented footer
+     // copy. False preserves the desktop/TV presentation for existing games.
+     bool ui_touch_friendly = false;
++    // Runtime settings menu look: a recomp-ui theme name (nullptr: "gba") and
++    // a TrueType font, opened with SDL_RWFromFile (on Android a relative path
++    // is an APK asset); the built-in ImGui font when unset or unreadable.
++    const char* runtime_ui_theme = nullptr;
++    const char* runtime_ui_font = nullptr;
+ 
+     // Game/device calibration beneath the user-facing gyro multiplier.
+     // A menu value of 1.00x means this game's authored baseline; 0.75 here
+@@ -295,6 +321,9 @@ struct RunOptions {
      // Lowercase SHA-1 of the only accepted patched output for a corpus built
      // against one translation release. Null leaves data-only patches open.
      const char* launcher_required_patch_sha1 = nullptr;
