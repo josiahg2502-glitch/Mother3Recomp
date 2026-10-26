@@ -52,6 +52,7 @@ bool g_battle = false;
 Uint32 g_next = 0;
 int g_misses = 0;  // consecutive failed checks of the field still in use
 int g_margin_left = 0, g_margin_right = 0;  // margin widths of the widened view, set by tick()
+int g_margin_top = 0, g_margin_bottom = 0;   // rows above and below the native 160
 
 bool in_ewram(std::uint32_t a) { return a >= 0x02000000u && a < 0x02040000u; }
 
@@ -152,6 +153,7 @@ bool void_cell(const Field& f, int cx, int cy) {
 // asks about the same few cells for every margin pixel of every layer. A 32x32
 // direct-mapped window covers the screen plus margins without collisions.
 std::uint32_t g_field_gen = 0;  // bumped by tick() whenever it replaces g
+std::uint32_t g_frame = 0;      // bumped by frame_start() as each widened frame renders
 bool void_cell_live(int cx, int cy) {
     struct Slot { int cx, cy; std::uint64_t frame; std::uint32_t gen; bool is_void; };
     static Slot s_slot[32 * 32];
@@ -222,12 +224,15 @@ bool score(Field& f, const std::uint8_t* r, const std::uint8_t* vram, double nee
 }
 
 // Interior maps pack several rooms; a margin point belongs to this one only if
-// the row from the native screen edge out to it never crosses the void.
+// the path from the nearest native pixel out to it never crosses the void:
+// along the native row to its column, then along that column to its row.
 bool in_room(int cx, int cy, int hx, int y) {
-    const int wy = (cy + y) >> 4, wx = (cx + hx) >> 4;
-    const int edge = (cx + (hx < 0 ? 0 : 239)) >> 4;
-    for (int c = edge; c != wx; c += hx < 0 ? -1 : 1)
-        if (void_cell_live(c, wy)) return false;
+    const int wx = (cx + hx) >> 4, wy = (cy + y) >> 4;
+    const int ex = (cx + std::clamp(hx, 0, 239)) >> 4, ey = (cy + std::clamp(y, 0, 159)) >> 4;
+    for (int c = ex; c != wx; c += wx < ex ? -1 : 1)
+        if (void_cell_live(c, ey)) return false;
+    for (int c = ey; c != wy; c += wy < ey ? -1 : 1)
+        if (void_cell_live(wx, c)) return false;
     return !void_cell_live(wx, wy);
 }
 
@@ -242,11 +247,12 @@ int void_width(int cx, int cy, int y, bool left) {
 // When the camera sits at a map edge (cutscenes often park it there) one margin is
 // void. Blacking the same width on the other side keeps the native picture centred
 // instead of looking shoved sideways; the black shrinks evenly as the camera moves on.
+// Rows above and below the native screen follow its first and last row.
 int black_width(int cx, int cy, int y) {
     static int s_cx = -100000, s_cy = 0, s_map = -1;
     static std::uint32_t s_layer = 0;
     static std::int8_t s_width[160];
-    if (y < 0 || y >= 160) return 0;
+    y = std::clamp(y, 0, 159);
     if (cx != s_cx || cy != s_cy || g.map != s_map || g.layer[1] != s_layer) {
         s_cx = cx, s_cy = cy, s_map = g.map, s_layer = g.layer[1];
         std::fill(std::begin(s_width), std::end(s_width), static_cast<std::int8_t>(-1));
@@ -269,28 +275,61 @@ bool in_black(int cx, int cy, int hx, int y) {
     return b && (hx < -g_margin_left + b || hx >= 240 + g_margin_right - b);
 }
 
+// A sprite's position and size in native-relative pixels. OAM X is 9 bits and
+// Y 8 bits, so the hardware reads X 256..511 and Y 160..255 as left of and
+// above the screen. The margins reach past those limits (X up to 319 when the
+// right margin is 80 wide), so a value is read as right of or below the
+// screen when that is where it lands in the view; both readings can't.
+bool obj_box(std::uint16_t attr0, std::uint16_t attr1, int* sx, int* sy, int* w, int* h) {
+    static const int kW[3][4] = {{8, 16, 32, 64}, {16, 32, 32, 64}, {8, 8, 16, 32}};
+    static const int kH[3][4] = {{8, 16, 32, 64}, {8, 8, 16, 32}, {16, 32, 32, 64}};
+    const int shape = (attr0 >> 14) & 3, size = (attr1 >> 14) & 3;
+    if (shape > 2) return false;
+    const int doubled = (attr0 & 0x300) == 0x300 ? 2 : 1;  // affine double-size box
+    *w = kW[shape][size] * doubled;
+    *h = kH[shape][size] * doubled;
+    *sx = attr1 & 0x1FF;
+    *sy = attr0 & 0xFF;
+    if (*sx >= 256 && (*sx >= 240 + g_margin_right || *sx - 512 + *w > -g_margin_left)) *sx -= 512;
+    if (*sy >= 160 + g_margin_bottom) *sy -= 256;
+    return true;
+}
+
+// True when a sprite whose box reaches into a margin belongs there: its feet
+// stand on the native screen, or in this room and outside the centring black.
+bool obj_shows_in_margin(int sx, int sy, int w, int h) {
+    const std::uint8_t* r = io();
+    if (!r) return false;
+    const int px = std::clamp(sx + w / 2, -64, 303);
+    const int py = std::clamp(sy + h - 1, -g_margin_top, 159 + g_margin_bottom);  // feet
+    if (px >= 0 && px < 240 && py >= 0 && py < 160) return true;
+    int cx, cy;
+    camera(r, 2, &cx, &cy);
+    return in_room(cx, cy, px, py) && !in_black(cx, cy, px, py) && !hidden_outside_windows(r, 0x10);
+}
+
 // Sprites reaching into a margin from another room (furniture next door, parked
 // actors) are moved off the canvas; sprites in this room show as usual.
 int place_obj(int, std::uint16_t attr0, std::uint16_t attr1, std::uint16_t, int* out_sx) {
     if (!g.ok) return 0;
-    static const int kW[3][4] = {{8, 16, 32, 64}, {16, 32, 32, 64}, {8, 8, 16, 32}};
-    static const int kH[3][4] = {{8, 16, 32, 64}, {8, 8, 16, 32}, {16, 32, 32, 64}};
-    const int shape = (attr0 >> 14) & 3, size = (attr1 >> 14) & 3;
-    if (shape > 2) return 0;
-    int sx = attr1 & 0x1FF, sy = attr0 & 0xFF;
-    if (sx & 0x100) sx -= 0x200;
-    if (sy >= 160) sy -= 256;
-    const int w = kW[shape][size], h = kH[shape][size];
-    if (sx >= 0 && sx + w <= 240) return 0;  // fully on the native screen
-    const std::uint8_t* r = io();
-    if (!r) return 0;
-    int cx, cy;
-    camera(r, 2, &cx, &cy);
-    const int px = std::clamp(sx + w / 2, -64, 303), py = std::clamp(sy + h - 1, 0, 159);  // feet
-    if ((px >= 0 && px < 240) ||
-        (in_room(cx, cy, px, py) && !in_black(cx, cy, px, py) && !hidden_outside_windows(r, 0x10)))
-        return 0;
-    *out_sx = 100000;  // off every canvas
+    int sx, sy, w, h;
+    if (!obj_box(attr0, attr1, &sx, &sy, &w, &h)) return 0;
+    const bool native = sx >= 0 && sx + w <= 240;  // within the native columns
+    *out_sx = native || obj_shows_in_margin(sx, sy, w, h) ? sx : 100000;  // else off every canvas
+    return 1;
+}
+
+// The rows above and below the native screen draw only sprites this accepts:
+// field sprites reaching there whose feet are in this room. Everything else
+// keeps the hardware's reading and stays within the native rows.
+int place_obj_y(int, std::uint16_t attr0, std::uint16_t attr1, std::uint16_t, int* out_sy) {
+    if (!g.ok || (!g_margin_top && !g_margin_bottom)) return 0;
+    int sx, sy, w, h;
+    if (!obj_box(attr0, attr1, &sx, &sy, &w, &h)) return 0;
+    if (sy >= 0 && sy + h <= 160) return 0;  // within the native rows
+    if (sy + h <= -g_margin_top || sy >= 160 + g_margin_bottom) return 0;  // in neither margin
+    if (!obj_shows_in_margin(sx, sy, w, h)) return 0;
+    *out_sy = sy;
     return 1;
 }
 
@@ -321,7 +360,7 @@ int overlap_view(std::uint32_t addr, int, ArmCpuState* cpu) {
     if (bus_read_u16(rect + 4) != 240 || bus_read_u16(rect + 6) != 160) return 0;  // not the view
     auto s16 = [](std::uint32_t a) { return static_cast<int>(static_cast<std::int16_t>(bus_read_u16(a))); };
     const int x = s16(rect) - g_margin_left, w = 240 + g_margin_left + g_margin_right;
-    const int y = s16(rect + 2), h = 160;
+    const int y = s16(rect + 2) - g_margin_top, h = 160 + g_margin_top + g_margin_bottom;
     const int px = s16(pos), py = s16(pos + 2);
     const int half_w = bus_read_u16(size) >> 1, box_h = bus_read_u16(size + 2);
     const int loops = addr == kOverlapLooping ? ew8(kMapLoops) : 0;
@@ -347,26 +386,101 @@ GBA_MOD_CONSTRUCTOR(register_cull_hooks) {
     gba_mod_register_function_entry_plugin(kCullHooks[1], kOverlapLooping, 1, &overlap_view);
 }
 
-// BG0 carries text boxes and the cinematic letterbox bars. A bar is a row of
-// solid one-colour tiles, so a margin continues BG0 only where the tile at the
-// native screen edge is solid; text boxes (bordered, transparent edges) stay put.
+// BG0 carries text boxes, menus and the cinematic letterbox bars. A bar is a
+// row of solid one-colour tiles, so a side margin continues BG0 only where the
+// native screen edge shows that colour (side_fill); text boxes (bordered,
+// transparent edges) stay put. Above and below the screen BG0 continues only when it covers
+// the whole edge row (a bar, or a text box or menu against that edge): those
+// rows then take a solid tile of that row, so scenery the box hid natively
+// doesn't peek out past it.
+std::uint32_t bg0_entry_at(const std::uint8_t* r, int hx, int y) {
+    const int cnt = io16(r, 0x08), hofs = io16(r, 0x10) & 0x1FF, vofs = io16(r, 0x12) & 0x1FF;
+    return ((cnt >> 8) & 31) * 0x800u + 2u * std::uint32_t((((y + vofs) >> 3) & 31) * 32 + (((hx + hofs) >> 3) & 31));
+}
+
+bool solid_tile(const std::uint8_t* r, const std::uint8_t* vram, int hx, int y, std::uint16_t* out) {
+    const std::uint32_t at = bg0_entry_at(r, hx, y);
+    const std::uint16_t entry = static_cast<std::uint16_t>(vram[at] | (vram[at + 1] << 8));
+    const std::uint8_t* tile = vram + ((io16(r, 0x08) >> 2) & 3) * 0x4000u + (entry & 0x3FFu) * 32u;
+    const std::uint8_t first = tile[0];
+    if ((first & 15) == 0 || (first >> 4) != (first & 15)) return false;
+    for (int i = 1; i < 32; ++i)
+        if (tile[i] != first) return false;
+    *out = entry;
+    return true;
+}
+
+// BG0's colour (palette bank and index) at native pixel (hx, y); 0 is transparent.
+int bg0_color_at(const std::uint8_t* r, const std::uint8_t* vram, int hx, int y) {
+    const std::uint32_t at = bg0_entry_at(r, hx, y);
+    const std::uint16_t entry = static_cast<std::uint16_t>(vram[at] | (vram[at + 1] << 8));
+    int px = (hx + (io16(r, 0x10) & 0x1FF)) & 7, py = (y + (io16(r, 0x12) & 0x1FF)) & 7;
+    if (entry & 0x400) px = 7 - px;
+    if (entry & 0x800) py = 7 - py;
+    const std::uint8_t pair = vram[((io16(r, 0x08) >> 2) & 3) * 0x4000u + (entry & 0x3FFu) * 32u + py * 4 + (px >> 1)];
+    const int index = (px & 1) ? pair >> 4 : pair & 15;
+    return index ? ((entry >> 12) << 4) | index : 0;
+}
+
+// A side margin continues BG0 on native row y when the edge tile is solid, or
+// when the edge pixel has the colour of a solid tile further along the row (a
+// menu bar whose edge tiles carry a frame line).
+bool side_fill(const std::uint8_t* r, const std::uint8_t* vram, int ex, int y, std::uint16_t* out) {
+    if (solid_tile(r, vram, ex, y, out)) return true;
+    const int color = bg0_color_at(r, vram, ex, y);
+    if (!color) return false;
+    for (int k = 1; k < 30; ++k) {
+        const int hx = ex == 0 ? 8 * k : 239 - 8 * k;
+        if (solid_tile(r, vram, hx, y, out) && bg0_color_at(r, vram, hx, y) == color) return true;
+    }
+    return false;
+}
+
+// For the top (y < 0) or bottom edge row: whether BG0 is opaque along all of
+// it, and a solid tile on it to continue with. Computed once per frame.
+bool covering_edge_row(const std::uint8_t* r, const std::uint8_t* vram, int y, std::uint16_t* fill) {
+    struct Edge { std::uint64_t frame = ~std::uint64_t{0}; bool covers = false; std::uint16_t fill = 0; };
+    static Edge s_edge[2];
+    gba::GbaPpu* ppu = gbarecomp::active_ppu();
+    const std::uint64_t frame = ppu ? ppu->frame_count() : 0;
+    Edge& e = s_edge[y < 0 ? 0 : 1];
+    if (e.frame != frame) {
+        e = {frame, false, 0};
+        const int ey = y < 0 ? 0 : 159, vofs = io16(r, 0x12) & 0x1FF;
+        const std::uint32_t chars = ((io16(r, 0x08) >> 2) & 3) * 0x4000u;
+        bool covers = true, found = false;
+        for (int hx = 0; hx < 240 && covers; ++hx) {
+            const std::uint32_t at = bg0_entry_at(r, hx, ey);
+            const std::uint16_t entry = static_cast<std::uint16_t>(vram[at] | (vram[at + 1] << 8));
+            int px = (hx + (io16(r, 0x10) & 0x1FF)) & 7, py = (ey + vofs) & 7;
+            if (entry & 0x400) px = 7 - px;
+            if (entry & 0x800) py = 7 - py;
+            const std::uint8_t pair = vram[chars + (entry & 0x3FFu) * 32u + py * 4 + (px >> 1)];
+            covers = ((px & 1) ? pair >> 4 : pair & 15) != 0;
+            if (covers && !found && (hx & 7) == 0) found = solid_tile(r, vram, hx, ey, &e.fill);
+        }
+        e.covers = covers && found;
+    }
+    *fill = e.fill;
+    return e.covers;
+}
+
 int extend_solid_edge(const std::uint8_t* r, int hx, int y, std::uint16_t* out) {
     gba::GbaBus* bus = gbarecomp::active_bus();
     if (!bus) return gba::kWsTilemapUnavailable;
     const std::uint8_t* vram = bus->vram_ptr();
-    const int cnt = io16(r, 0x08), hofs = io16(r, 0x10) & 0x1FF, vofs = io16(r, 0x12) & 0x1FF;
+    const int cnt = io16(r, 0x08);
     if ((cnt >> 14) != 0 || (cnt & 0x80)) return gba::kWsTilemapUnavailable;
-    const int ex = hx < 0 ? 0 : 239;
-    const std::uint32_t at = ((cnt >> 8) & 31) * 0x800u +
-        2u * std::uint32_t((((y + vofs) >> 3) & 31) * 32 + (((ex + hofs) >> 3) & 31));
-    const std::uint16_t entry = static_cast<std::uint16_t>(vram[at] | (vram[at + 1] << 8));
-    const std::uint8_t* tile = vram + ((cnt >> 2) & 3) * 0x4000u + (entry & 0x3FFu) * 32u;
-    const std::uint8_t first = tile[0];
-    if ((first & 15) == 0 || (first >> 4) != (first & 15)) return gba::kWsTilemapUnavailable;
-    for (int i = 1; i < 32; ++i)
-        if (tile[i] != first) return gba::kWsTilemapUnavailable;
-    *out = entry;
-    return gba::kWsTilemapReplace;
+    const int ex = std::clamp(hx, 0, 239), ey = std::clamp(y, 0, 159);
+    if (y < 0 || y >= 160) {
+        std::uint16_t fill;
+        if (!covering_edge_row(r, vram, y, &fill)) return gba::kWsTilemapUnavailable;
+        if (hx >= 0 && hx < 240) {
+            *out = fill;
+            return gba::kWsTilemapReplace;
+        }
+    }
+    return side_fill(r, vram, ex, ey, out) ? gba::kWsTilemapReplace : gba::kWsTilemapUnavailable;
 }
 
 // Battles: BG2/BG3 are tiling background patterns (with per-line distortion),
@@ -402,40 +516,128 @@ bool blended_overlay(const std::uint8_t* r) {
     return ((bldcnt >> 6) & 3) == 1 && (bldcnt & 0x02);
 }
 
-int provide(int bg, int hx, int y, std::uint16_t* out) {
-    const std::uint8_t* r = io();
-    if (!r) return gba::kWsTilemapUnavailable;
-    if (g_battle) return provide_battle(r, bg, y);
-    if (!g.ok || hidden_outside_windows(r, 1 << bg)) return gba::kWsTilemapUnavailable;
-    {
-        int cx, cy;
-        camera(r, 2, &cx, &cy);
-        if (in_black(cx, cy, hx, y)) return gba::kWsTilemapUnavailable;
-    }
+// What a margin pixel of one field layer shows, from that row's cameras.
+struct RowView {
+    std::uint32_t frame = ~0u;
+    std::uint32_t gen = 0;
+    int y = 0;
+    bool hidden[4] = {};                   // per BG, outside every window it shows in
+    int black_left = 0, black_right = 0;   // margin columns the centring black covers
+    int room_cx[4] = {}, room_cy[4] = {};  // per BG, the camera its rooms are measured in
+    int org_x[4] = {}, org_y[4] = {};      // per BG, the world position of its top-left
+};
+
+int provide_field(const std::uint8_t* r, const RowView& v, int bg, int hx, int y, std::uint16_t* out) {
     if (bg == 0) return extend_solid_edge(r, hx, y, out);
     if (bg == 1 && !g.bg_ok[1] && g.detached && g.lw == 16 && blended_overlay(r))
         return gba::kWsTilemapKeepWrapped;
-    if (bg > 3 || !g.bg_ok[bg]) return gba::kWsTilemapUnavailable;
-    int cx, cy;
-    camera(r, bg == 1 && g.detached ? 2 : bg, &cx, &cy);  // rooms are in scenery coordinates
-    if (!in_room(cx, cy, hx, y)) return gba::kWsTilemapUnavailable;
-    origin(g, r, bg, &cx, &cy);
-    const int e = entry_at(g, bg - 1, (cx + hx) >> 3, (cy + y) >> 3);
+    if (!g.bg_ok[bg] || !in_room(v.room_cx[bg], v.room_cy[bg], hx, y)) return gba::kWsTilemapUnavailable;
+    const int e = entry_at(g, bg - 1, (v.org_x[bg] + hx) >> 3, (v.org_y[bg] + y) >> 3);
     if (e <= 0) return gba::kWsTilemapUnavailable;
     *out = static_cast<std::uint16_t>(e);
     return gba::kWsTilemapReplace;
 }
+
+// The PPU asks for every margin pixel of every layer, a row at a time. Along a
+// row the cameras are fixed, and the answer changes only where the pixel enters
+// another 8px tile of the layer or another 16px room cell (in_room depends on
+// nothing else once the row is fixed), so both are kept.
+int provide(int bg, int hx, int y, std::uint16_t* out) {
+    if (g_battle) {
+        const std::uint8_t* r = io();
+        return r ? provide_battle(r, bg, y) : gba::kWsTilemapUnavailable;
+    }
+    if (!g.ok || bg > 3) return gba::kWsTilemapUnavailable;
+    static RowView s_row;
+    if (s_row.frame != g_frame || s_row.gen != g_field_gen || s_row.y != y) {
+        const std::uint8_t* r = io();
+        if (!r) return gba::kWsTilemapUnavailable;
+        s_row.frame = g_frame;
+        s_row.gen = g_field_gen;
+        s_row.y = y;
+        for (int b = 0; b <= 3; ++b) s_row.hidden[b] = hidden_outside_windows(r, 1 << b);
+        int cx, cy;
+        camera(r, 2, &cx, &cy);
+        const int black = black_width(cx, cy, y);
+        s_row.black_left = -g_margin_left + black;
+        s_row.black_right = 240 + g_margin_right - black;
+        for (int b = 1; b <= 3; ++b) {
+            camera(r, b == 1 && g.detached ? 2 : b, &s_row.room_cx[b], &s_row.room_cy[b]);  // rooms are in scenery coordinates
+            origin(g, r, b, &s_row.org_x[b], &s_row.org_y[b]);
+        }
+    }
+    if (s_row.hidden[bg] || hx < s_row.black_left || hx >= s_row.black_right)
+        return gba::kWsTilemapUnavailable;
+    // BG0 answers per side (and, above and below the screen, once for the rest).
+    const int cell = bg == 0 ? (hx < 0 ? -1 : hx >= 240 ? -2 : -3) : (s_row.room_cx[bg] + hx) >> 4;
+    const int tile = bg == 0 ? 0 : (s_row.org_x[bg] + hx) >> 3;
+    struct Memo {
+        std::uint32_t frame = ~0u;
+        std::uint32_t gen = 0;
+        int y = 0, cell = 0, tile = 0, action = 0;
+        std::uint16_t entry = 0;
+    };
+    static Memo s_memo[4];
+    Memo& m = s_memo[bg];
+    if (m.frame != g_frame || m.gen != g_field_gen || m.y != y || m.cell != cell || m.tile != tile) {
+        const std::uint8_t* r = io();
+        if (!r) return gba::kWsTilemapUnavailable;
+        m = {g_frame, g_field_gen, y, cell, tile, 0, 0};
+        m.action = provide_field(r, s_row, bg, hx, y, &m.entry);
+    }
+    *out = m.entry;
+    return m.action;
+}
+
+void frame_start();
 
 }  // namespace
 
 void install() {
     gba::g_ws_tilemap_provider = &provide;
     gba::g_ws_obj_attr_x_provider = &place_obj;
+    gba::g_ws_obj_attr_y_provider = &place_obj_y;
     gba::g_ws_authored_margin_layers = 1;
     gba::g_ws_pillarbox = 1;  // until the field validates
+    gba::g_ws_frame_start = &frame_start;
 }
 
 namespace {
+// The game's camera stops at the map's edges with the native 240x160 inside the
+// map. The widened view stops there too: near an edge the native picture slides
+// towards it inside the canvas instead of the margins showing the void past the
+// map (which then took matching black on the other side, a black frame in the
+// corners). Looping maps, battles and other screens keep it centred.
+void place_native_view(gba::GbaPpu* ppu) {
+    const int spare_x = static_cast<int>(ppu->render_width()) - 240;
+    const int spare_y = static_cast<int>(ppu->render_height()) - 160;
+    int left = static_cast<int>(ppu->view_extra_left()), top = static_cast<int>(ppu->view_extra_top());
+    const std::uint8_t* r = io();
+    const bool placed = g.ok && r;
+    if (placed) {
+        int cx, cy;
+        camera(r, 2, &cx, &cy);
+        const int loops = ew8(kMapLoops), map_w = 16 * g.width, map_h = 16 * g.height;
+        if (!(loops & 0x20) && map_w >= 240 + spare_x) left = std::clamp(left, cx + 240 + spare_x - map_w, cx);
+        if (!(loops & 0x10) && map_h >= 160 + spare_y) top = std::clamp(top, cy + 160 + spare_y - map_h, cy);
+        left = std::clamp(left, 0, spare_x);
+        top = std::clamp(top, 0, spare_y);
+    }
+    gba::g_ws_native_view_left = placed ? left : -1;
+    gba::g_ws_native_view_top = placed ? top : -1;
+    g_margin_left = left;
+    g_margin_right = spare_x - left;
+    g_margin_top = top;
+    g_margin_bottom = spare_y - top;
+}
+
+// Each rendered frame: what it shows is settled by now (the game wrote its
+// scroll during vblank), so the placement matches the scroll it renders with.
+void frame_start() {
+    ++g_frame;
+    if (gba::GbaPpu* ppu = gbarecomp::active_ppu()) place_native_view(ppu);
+}
+
 void set_detached(Field& f) {
     f.detached = f.layer[0] && (f.loop_x || f.loop_y || f.lw != f.width || f.lh != f.height);
 }
@@ -450,8 +652,6 @@ void tick() {
     // Hooks start disabled and a launch disables them again; at 240px they stay off.
     for (const char* id : kCullHooks)
         if (!gba_mod_function_hook_enabled(id)) gba_mod_set_function_hook_enabled(id, 1);
-    g_margin_left = static_cast<int>(ppu->view_extra_left());
-    g_margin_right = static_cast<int>(ppu->render_width()) - 240 - g_margin_left;
     const Uint32 now = SDL_GetTicks();
     if (now < g_next) return;
     g_next = now + 50;
