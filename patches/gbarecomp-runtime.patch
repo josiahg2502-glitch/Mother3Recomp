@@ -71,7 +71,7 @@ index 0201eeb..2133a50 100644
          debug {
              manifest.srcFile new File(platformRoot, "debug/AndroidManifest.xml")
 diff --git a/platform/android/java/org/gbarecomp/GbaGameActivity.java b/platform/android/java/org/gbarecomp/GbaGameActivity.java
-index 6e36782..0c40b37 100644
+index 6e36782..d515b18 100644
 --- a/platform/android/java/org/gbarecomp/GbaGameActivity.java
 +++ b/platform/android/java/org/gbarecomp/GbaGameActivity.java
 @@ -29,6 +29,9 @@ import java.nio.charset.StandardCharsets;
@@ -92,7 +92,7 @@ index 6e36782..0c40b37 100644
          super.onCreate(savedInstanceState);
          if (Build.VERSION.SDK_INT >= 28) {
              WindowManager.LayoutParams attributes = getWindow().getAttributes();
-@@ -119,25 +123,71 @@ public class GbaGameActivity extends SDLActivity {
+@@ -119,25 +123,74 @@ public class GbaGameActivity extends SDLActivity {
      }
  
      protected void enterImmersiveMode() {
@@ -136,6 +136,9 @@ index 6e36782..0c40b37 100644
 +            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
 +        }
          if (Build.VERSION.SDK_INT >= 30) {
++            // Hidden bars alone leave the window inset by them (1920x940 on a
++            // 1920x1080 handheld); the game must lay out under them too.
++            getWindow().setDecorFitsSystemWindows(!fullscreen);
              WindowInsetsController controller = getWindow().getInsetsController();
              if (controller != null) {
 -                controller.hide(WindowInsets.Type.statusBars()
