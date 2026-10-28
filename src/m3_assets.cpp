@@ -1,4 +1,5 @@
 #include "m3_assets.h"
+#include "m3_launcher_font.h"
 
 #include <algorithm>
 #include <string_view>
@@ -81,6 +82,11 @@ Rom::Rom(std::vector<std::uint8_t> bytes) : b_(std::move(bytes)) {
     if (u32(kGfxBank0) != 1001 || u32(kSpriteInfo) != 1000 || u32(kSpritePal) != 365) return;
     menu_tiles_ = lz77(b_, kMenuGfx);
     ok_ = menu_tiles_.size() >= 64 * 32;
+    // The Japanese ROM and translations built on it keep these tables but not
+    // v1.3's Latin font (FNV-1a of its 'A'-'Z' glyphs), so they get the bundled one.
+    std::uint64_t h = 0xCBF29CE484222325ull;
+    for (std::size_t i = kFont + 33 * 32; i < kFont + 59 * 32; ++i) h = (h ^ b_[i]) * 0x100000001B3ull;
+    rom_font_ = h == 0xB8067095DE201A9Bull;
 }
 
 std::uint16_t Rom::u16(std::size_t o) const {
@@ -196,6 +202,16 @@ Image Rom::glyph(char c, int* advance) const {
     if (!ok_ || c < 32 || c > 126) return img;
     const std::size_t o = kFont + std::size_t(c - 32) * 32;
     int right = -1;
+    if (!rom_font_) {
+        for (int y = 0; y < 16; ++y)
+            for (int x = 0; x < 16; ++x)
+                if ((kLauncherFont[c - 32][y] << x) & 0x8000) {
+                    img.px[y * 16 + x] = 0xFFFFFFFFu;
+                    right = std::max(right, x);
+                }
+        if (right >= 0) *advance = right + 2;
+        return img;
+    }
     for (int t = 0; t < 4; ++t)
         for (int y = 0; y < 8; ++y)
             for (int x = 0; x < 8; ++x)

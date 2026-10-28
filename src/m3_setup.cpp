@@ -149,8 +149,8 @@ bool load(const std::string& dir, Files* out) {
         write_line(dir + "/rom.cfg", f.rom_path);
         sha = sha1(f.rom);
     }
-    // An unpatched Japanese ROM plays as is; the launcher's English font isn't in it.
-    f.drawable = sha != kJapanSha1 && drawable(f.rom);
+    // An unpatched Japanese ROM plays as is; the launcher draws it with its bundled font.
+    f.drawable = drawable(f.rom);
     *out = std::move(f);
     return true;
 }
@@ -177,7 +177,6 @@ bool choose(const std::string& dir, Files* files, bool bios) {
         std::string sha = sha1(rom), boot = p;
         if (sha == kJapanSha1 &&
             ask("This is the original Japanese ROM. Play it untranslated, in Japanese? "
-                "(The MOTHER 3 launcher needs a translated ROM, so the game will start directly.) "
                 "Choose No to apply a translation patch, such as the English v1.3 patch, instead.")) {
             // Played as is.
         } else if (sha == kJapanSha1) {
@@ -200,7 +199,7 @@ bool choose(const std::string& dir, Files* files, bool bios) {
             continue;
         }
         next.rom_path = boot;
-        next.drawable = sha != kJapanSha1 && drawable(rom);
+        next.drawable = drawable(rom);
         next.rom = std::move(rom);
         break;
     }

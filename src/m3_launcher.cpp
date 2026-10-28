@@ -328,6 +328,8 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
     Walker walker;
     Stick stick;
     int row = 0, frame = 0;
+    double ticks_due = 0;  // 60 Hz steps owed to the party walk
+    Uint64 last_tick = SDL_GetPerformanceCounter();
     bool capturing = false, running = true, using_pad = false;
     Result result = Result::Quit;
 
@@ -465,7 +467,27 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
         }
         if (built_flavor != st.flavor) build_windows();
 
-        walker.tick();
+        // The party walks 60 steps a second whatever the display's refresh rate:
+        // vsync alone ran it 4x fast on a 240 Hz screen. A stall skips ahead at most 4.
+        const Uint64 now = SDL_GetPerformanceCounter();
+        ticks_due = std::min(ticks_due + double(now - last_tick) * 60.0 / double(SDL_GetPerformanceFrequency()), 4.0);
+        last_tick = now;
+        if (ticks_due < 1.0) SDL_Delay(1);  // in case vsync isn't on
+        for (; ticks_due >= 1.0; ticks_due -= 1.0) {
+            walker.tick();
+            ++frame;
+            for (const char* q = pad_script; q && *q;) {
+                char* end;
+                const long at = std::strtol(q, &end, 10), button = *end == ':' ? std::strtol(end + 1, &end, 10) : -1;
+                if (at == frame && button >= 0) {
+                    SDL_Event ev{};
+                    ev.type = SDL_CONTROLLERBUTTONDOWN;
+                    ev.cbutton.button = static_cast<Uint8>(button);
+                    SDL_PushEvent(&ev);
+                }
+                q = *end == ',' ? end + 1 : nullptr;
+            }
+        }
         const int cam_x = std::clamp(kCamera.x, 0, scene.w - kW);
         const int cam_y = std::clamp(kCamera.y, 0, scene.h - kH);
         Canvas& cv = ui.cv;
@@ -576,20 +598,8 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
         SDL_RenderClear(ren);
         SDL_RenderCopy(ren, tex, nullptr, nullptr);
         SDL_RenderPresent(ren);
-        ++frame;
-        for (const char* q = pad_script; q && *q;) {
-            char* end;
-            const long at = std::strtol(q, &end, 10), button = *end == ':' ? std::strtol(end + 1, &end, 10) : -1;
-            if (at == frame && button >= 0) {
-                SDL_Event ev{};
-                ev.type = SDL_CONTROLLERBUTTONDOWN;
-                ev.cbutton.button = static_cast<Uint8>(button);
-                SDL_PushEvent(&ev);
-            }
-            q = *end == ',' ? end + 1 : nullptr;
-        }
 
-        if (shot && frame == shot_frame) {
+        if (shot && frame >= shot_frame) {
             if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(cv.px.data(), kW, kH, 32, kW * 4,
                                                                     SDL_PIXELFORMAT_ARGB8888)) {
                 SDL_SaveBMP(s, shot);

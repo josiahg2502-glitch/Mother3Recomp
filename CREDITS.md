@@ -63,7 +63,7 @@ This project is made possible through the incredible work of developers, transla
 * **In-game bezel**: Composed at first launch from the player's own ROM (the Tazmily crossroads map, a menu window in the chosen flavor, and the Lucas, Kumatora, Duster and Boney sprites). No artwork ships with the download.
 * **Interposer Runtime (`mother3_bezel.dll`)**: Custom SDL Dynamic API hook for seamless 1080p bezel composition, 3:2 aspect integer scaling, F10 bezel toggle (Clean Fullscreen mode), and PC hotkeys (`F11` overlay menu, `Esc` exit, `F1`/`F2` save states).
 * **Multi-Resolution Application Icon**: Custom embedded `Mother 3.ico` icon packaging official logo artwork.
-* **Android runtime menu font**: [Pixelify Sans](https://github.com/eifetx/Pixelify-Sans) by the Pixelify Sans Project Authors, under the SIL Open Font License 1.1 (`android/app/src/main/res/raw/pixelify_sans_ofl.txt`). The menu's "mother3" theme follows the game's windows in colours only.
+* **Android runtime menu font and the launcher's fallback font**: [Pixelify Sans](https://github.com/eifetx/Pixelify-Sans) by the Pixelify Sans Project Authors, under the SIL Open Font License 1.1 (`android/app/src/main/res/raw/pixelify_sans_ofl.txt`). The launcher draws its text with it (rasterized into `src/m3_launcher_font.h` by `tools/make_launcher_font.py`) for ROMs without English v1.3's font. The menu's "mother3" theme follows the game's windows in colours only.
 * **Automated One-Click Mod Patcher**: PowerShell/Batch script for instant zero-dependency ROM patching.
 
 ---
