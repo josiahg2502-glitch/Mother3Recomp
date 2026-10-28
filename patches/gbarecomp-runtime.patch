@@ -2775,3 +2775,278 @@ diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
                  win.present_scaled(interpolated_fb.data(), 2);
                  pacer->wait_half_frame();
              }
+diff --git a/src/runtime/host_platform.h b/src/runtime/host_platform.h
+--- a/src/runtime/host_platform.h
++++ b/src/runtime/host_platform.h
+@@ -52,12 +52,14 @@ public:
+     // old behavior. Fast-forward presents one frame per wait already, so
+     // it is unaffected. The behind-resync below still bounds real stalls.
+     void wait_for_next_frame(uint64_t frames = 1);
+-    // Interpolated frames: wait_in_between() holds the in-between frame until a
+-    // fixed lead after the frame started (the slowest recent emulate+interpolate
+-    // time), and wait_half_frame() holds the real frame half a period after it,
+-    // so the two go out evenly spaced. Neither changes the deadline.
+-    void wait_in_between();
+-    void wait_half_frame();
++    // Smooth motion: when the previous frame should be fully on screen. It
++    // trails this frame's start by the slowest recent emulate time plus 2 ms,
++    // so the frames drawn between it and this one keep an even pace.
++    std::chrono::steady_clock::time_point smooth_origin();
++    std::chrono::steady_clock::time_point frame_start() const { return next_ - period_; }
++    std::chrono::nanoseconds period() const { return period_; }
++    // Sleep until `t` without moving the deadline. No-op while uncapped.
++    void sleep_until(std::chrono::steady_clock::time_point t);
+ 
+     // Realign the deadline to "now". Call after any non-real-time jump
+     // (startup, save-state load) so the pacer doesn't try to catch up.
+@@ -77,7 +79,7 @@ private:
+     // stays real-time on average (audio production would otherwise fall
+     // behind the host's audio clock) without a visibly short frame.
+     std::chrono::nanoseconds debt_{0};
+-    std::chrono::nanoseconds lead_{};  // in-between frame's offset into the frame
++    std::chrono::nanoseconds lead_{};  // smooth_origin()'s offset into the frame
+     bool uncapped_ = false;
+     bool raised_timer_res_ = false;
+     // HP-002: Windows high-resolution waitable timer (HANDLE, void* here to
+diff --git a/src/runtime/host_platform.cpp b/src/runtime/host_platform.cpp
+--- a/src/runtime/host_platform.cpp
++++ b/src/runtime/host_platform.cpp
+@@ -112,23 +112,20 @@ void FramePacer::wait_for_next_frame(uint64_t frames) {
+     }
+ }
+ 
+-void FramePacer::wait_in_between() {
+-    if (uncapped_) return;
+-    // Presenting the in-between frame as soon as it was ready left a short gap
+-    // to the real one (6 of 16.7 ms), and on a 120 Hz display both landed in
+-    // one refresh, so only 60 fps showed. The lead jumps up to a slow frame
+-    // and eases back down 50 us per frame.
++FramePacer::clock::time_point FramePacer::smooth_origin() {
++    // Presenting interpolated frames as soon as they were ready made the gap
++    // to the next one shrink with the emulate time (6 of 8.4 ms), and on a
++    // 120 Hz display two landed in one refresh, so only 60 fps showed. The
++    // lead jumps up to a slow frame and eases back down 50 us per frame.
+     const clock::time_point start = next_ - period_;
+     const auto busy = std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - start);
+-    lead_ = std::clamp(std::max(busy + std::chrono::milliseconds(1), lead_ - std::chrono::microseconds(50)),
+-                       std::chrono::nanoseconds(0), period_ / 2 - std::chrono::microseconds(500));
+-    sleep_until_point(start + lead_);
++    lead_ = std::clamp(std::max(busy + std::chrono::milliseconds(2), lead_ - std::chrono::microseconds(50)),
++                       std::chrono::nanoseconds(0), period_ / 2);
++    return start + lead_;
+ }
+ 
+-void FramePacer::wait_half_frame() {
+-    if (uncapped_) return;
+-    const clock::time_point target = next_ - period_ / 2 + lead_;
+-    if (clock::now() < target) sleep_until_point(target);
++void FramePacer::sleep_until(clock::time_point t) {
++    if (!uncapped_ && clock::now() < t) sleep_until_point(t);
+ }
+ 
+ void FramePacer::sleep_until_point(clock::time_point target) {
+diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
+--- a/src/runtime/runtime.cpp
++++ b/src/runtime/runtime.cpp
+@@ -3043,9 +3043,55 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+     std::optional<FramePacer> pacer;
+     bool fast_forward_active = false;
+     // Smooth motion: a game that installs gba::g_present_interpolator gets an
+-    // interpolated frame presented half a period before each paced real one.
++    // interpolated frame on every display refresh between its real frames.
+     // Native presentation only; the high-resolution surface is presented as is.
+     std::vector<uint8_t> interpolated_fb;
++    // One present per display refresh, early in the refresh before the one it
++    // is for, so each lands in its own refresh. It shows the moment that far
++    // from the previous frame (fully shown at smooth_origin()) to this one. A
++    // refresh whose present would fall after the next frame's deadline, or
++    // that needs the next frame, is left for the next call.
++    std::chrono::steady_clock::time_point smooth_slot{};  // next refresh not yet presented
++    bool smooth_on = false;                               // the game's last answer
++    auto present_smooth = [&]() -> bool {
++        using clock = std::chrono::steady_clock;
++        const auto frame = pacer->period();
++        const clock::time_point origin = pacer->smooth_origin();
++        const clock::time_point deadline = pacer->frame_start() + frame;
++        interpolated_fb.resize(ppu.render_bytes() * 4u);
++        const uint32_t w = ppu.render_width(), h = ppu.render_height();
++        if (!smooth_on && !(smooth_on = gba::g_present_interpolator(&ppu, live_fb.data(), w, h,
++                                                                    interpolated_fb.data(), 0.5f) != 0))
++            return false;
++        std::chrono::nanoseconds refresh{};
++        clock::time_point vblank{};
++        if (!win.display_timing(&refresh, &vblank) || refresh < std::chrono::milliseconds(2))
++            refresh = frame / 2;
++        const clock::time_point now = clock::now();
++        if (vblank == clock::time_point{}) vblank = smooth_slot != clock::time_point{} ? smooth_slot : now;
++        clock::time_point slot = vblank + ((std::max(smooth_slot, now) - vblank) / refresh) * refresh;
++        while (slot <= now || slot < smooth_slot - refresh / 2) slot += refresh;
++        constexpr auto kEarly = std::chrono::milliseconds(1);
++        for (;; slot += refresh) {
++            const clock::time_point at = std::max(slot - refresh + kEarly, clock::now());
++            if (at > deadline || slot > origin + frame) break;
++            pacer->sleep_until(at);
++            if (clock::now() >= slot) continue;  // missed this refresh
++            const float t = std::chrono::duration<float>(slot - origin) / std::chrono::duration<float>(frame);
++            if (t >= 0.999f) {
++                win.present(live_fb.data());
++            } else if (gba::g_present_interpolator(&ppu, live_fb.data(), w, h, interpolated_fb.data(),
++                                                   std::max(t, 0.0f))) {
++                win.present_scaled(interpolated_fb.data(), 2);
++            } else {
++                smooth_on = false;
++                win.present(live_fb.data());
++                break;
++            }
++        }
++        smooth_slot = slot;
++        return true;
++    };
+     auto present_live_frame = [&]() {
+         ppu.set_internal_resolution(args.internal_resolution, opts.high_resolution_affine_provider);
+         if (const auto* pixels = ppu.high_resolution_framebuffer()) {
+@@ -3054,15 +3100,9 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+             ++high_resolution_presented;
+             return;
+         }
+-        if (gba::g_present_interpolator && pacer && !pacer->uncapped() && !fast_forward_active) {
+-            interpolated_fb.resize(ppu.render_bytes() * 4u);
+-            if (gba::g_present_interpolator(&ppu, live_fb.data(), ppu.render_width(),
+-                                            ppu.render_height(), interpolated_fb.data())) {
+-                pacer->wait_in_between();
+-                win.present_scaled(interpolated_fb.data(), 2);
+-                pacer->wait_half_frame();
+-            }
+-        }
++        if (gba::g_present_interpolator && pacer && !pacer->uncapped() && !fast_forward_active &&
++            present_smooth())
++            return;
+         win.present(live_fb.data());
+     };
+     auto apply_runtime_view_geometry = [&](ViewGeometry geometry) -> bool {
+diff --git a/src/runtime/host_window.h b/src/runtime/host_window.h
+--- a/src/runtime/host_window.h
++++ b/src/runtime/host_window.h
+@@ -23,6 +23,7 @@
+ 
+ #pragma once
+ 
++#include <chrono>
+ #include <cstddef>
+ #include <cstdint>
+ 
+@@ -175,6 +176,11 @@ public:
+     // same destination; smooth motion's interpolated frames use 2 for
+     // half-pixel motion.
+     void present_scaled(const uint8_t* rgb888, int factor);
++    // Refresh period of the window's display, and (Windows compositor only)
++    // when its latest vblank was; `vblank` is left alone when unknown.
++    // Returns false when the period is unknown.
++    bool display_timing(std::chrono::nanoseconds* period,
++                        std::chrono::steady_clock::time_point* vblank) const;
+ 
+     // Push `count` int16_t mono samples assuming the engine's 65.536 kHz
+     // source rate. Prefer push_audio_block when the caller knows the real
+diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
+--- a/src/runtime/host_window.cpp
++++ b/src/runtime/host_window.cpp
+@@ -2512,6 +2512,43 @@ bool HostWindow::drawable_size(int* width, int* height) const {
+ 
+ void HostWindow::present(const uint8_t* rgb888) { present(rgb888, 0, 0); }
+ 
++bool HostWindow::display_timing(std::chrono::nanoseconds* period,
++                                std::chrono::steady_clock::time_point* vblank) const {
++    if (!open_ || !impl_ || !period || !vblank) return false;
++    auto* b = static_cast<Backend*>(impl_);
++    SDL_DisplayMode mode{};
++    const int index = SDL_GetWindowDisplayIndex(b->window);
++    const int hz = SDL_GetCurrentDisplayMode(index < 0 ? 0 : index, &mode) == 0 ? mode.refresh_rate : 0;
++    if (hz <= 0) return false;
++    *period = std::chrono::nanoseconds(1000000000LL / hz);
++#if defined(_WIN32)
++    // The compositor's clock gives the vblank phase. It times one display, so
++    // it is only used when its rate matches the window's display.
++    using Gcti = HRESULT (WINAPI*)(HWND, DWM_TIMING_INFO*);
++    static const Gcti gcti = [] {
++        HMODULE m = LoadLibraryA("dwmapi.dll");
++        return m ? reinterpret_cast<Gcti>(reinterpret_cast<void*>(GetProcAddress(m, "DwmGetCompositionTimingInfo")))
++                 : nullptr;
++    }();
++    DWM_TIMING_INFO ti{};
++    ti.cbSize = sizeof(ti);
++    LARGE_INTEGER freq{}, qpc{};
++    if (gcti && SUCCEEDED(gcti(nullptr, &ti)) && ti.qpcRefreshPeriod && QueryPerformanceFrequency(&freq) &&
++        QueryPerformanceCounter(&qpc)) {
++        const auto now = std::chrono::steady_clock::now();
++        auto ns = [&](long long q) {
++            return std::chrono::nanoseconds(static_cast<long long>(static_cast<double>(q) * 1e9 / freq.QuadPart));
++        };
++        const auto dwm = ns(static_cast<long long>(ti.qpcRefreshPeriod));
++        if (std::abs((dwm - *period).count()) * 20 < period->count()) {  // within 5%
++            *period = dwm;
++            *vblank = now - ns(static_cast<long long>(qpc.QuadPart - ti.qpcVBlank));
++        }
++    }
++#endif
++    return true;
++}
++
+ void HostWindow::present_scaled(const uint8_t* rgb888, int factor) {
+     if (!open_ || !impl_ || (factor != 1 && factor != 2)) return;
+     auto* b = static_cast<Backend*>(impl_);
+@@ -3638,6 +3675,9 @@ bool HostWindow::drawable_size(int* /*width*/, int* /*height*/) const {
+ void HostWindow::present(const uint8_t* /*rgb888*/) {}
+ void HostWindow::present(const uint8_t*, unsigned, unsigned) {}
+ void HostWindow::present_scaled(const uint8_t*, int) {}
++bool HostWindow::display_timing(std::chrono::nanoseconds*, std::chrono::steady_clock::time_point*) const {
++    return false;
++}
+ 
+ void HostWindow::load_input_config(const char* /*dir*/,
+                                    bool /*assist_tools_default*/,
+diff --git a/src/runtime/host_window_web.cpp b/src/runtime/host_window_web.cpp
+--- a/src/runtime/host_window_web.cpp
++++ b/src/runtime/host_window_web.cpp
+@@ -322,6 +322,9 @@ bool HostWindow::drawable_size(int* w,int* h) const { if(!impl_||!w||!h)return f
+ void HostWindow::present_scaled(const uint8_t* rgb, int factor) {
+     if (factor == 1) present(rgb);
+ }
++bool HostWindow::display_timing(std::chrono::nanoseconds*, std::chrono::steady_clock::time_point*) const {
++    return false;
++}
+ void HostWindow::set_fill_display(bool) {}
+ bool HostWindow::fill_display() const { return false; }
+ 
+diff --git a/src/gba/gba_ppu.h b/src/gba/gba_ppu.h
+--- a/src/gba/gba_ppu.h
++++ b/src/gba/gba_ppu.h
+@@ -347,12 +347,13 @@ extern "C" int g_ws_obj_native_clip;
+ 
+ // Present-time frame interpolation (host-only, default off). While
+ // g_ppu_record_motion is nonzero the PPU keeps the motion record above. A
+-// runtime with g_present_interpolator set calls it with each finished frame
+-// before presenting; returning nonzero means out2x now holds a (2w x 2h RGB888)
+-// frame for half a frame period earlier, which is presented first.
++// runtime with g_present_interpolator set calls it once per display refresh
++// with the newest finished frame and how far (0 <= t < 1) the moment shown
++// lies from the previous frame to it; returning nonzero means out2x now holds
++// that moment as a (2w x 2h RGB888) frame. Zero means no smooth motion now.
+ extern "C" int g_ppu_record_motion;
+ extern "C" int (*g_present_interpolator)(const GbaPpu* ppu, const uint8_t* rgb,
+-                                         uint32_t w, uint32_t h, uint8_t* out2x);
++                                         uint32_t w, uint32_t h, uint8_t* out2x, float t);
+ 
+ // Read-only, game-authored OBJ coverage for expanded margins. RGB555 bit 15
+ // marks a transparent pixel. Priority uses the hardware 0..3 BG/OBJ order.
+diff --git a/src/gba/gba_ppu.cpp b/src/gba/gba_ppu.cpp
+--- a/src/gba/gba_ppu.cpp
++++ b/src/gba/gba_ppu.cpp
+@@ -61,7 +61,7 @@ extern "C" int (*g_ws_obj_attr_y_provider)(int, std::uint16_t,
+ extern "C" const WsMarginObjPixel* (*g_ws_obj_margin_provider)(int, int*, int*) = nullptr;
+ extern "C" int g_ppu_record_motion = 0;
+ extern "C" int (*g_present_interpolator)(const GbaPpu*, const uint8_t*, uint32_t, uint32_t,
+-                                         uint8_t*) = nullptr;
++                                         uint8_t*, float) = nullptr;
+ 
+ namespace {
+ 

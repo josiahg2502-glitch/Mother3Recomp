@@ -21,7 +21,7 @@ struct Settings {
     int volume = 100;            // 0..100
     bool widescreen = false;     // field widescreen at 16:9 (284x160; 320x180 full screen on Android)
     int prompt_style = 0;        // in-game buttons: 0 auto, 1 Xbox, 2 PlayStation, 3 Nintendo, 4 keyboard
-    int smooth = 0;              // 120 fps smooth motion: 0 off, 1 on 100 Hz+ displays, 2 always
+    int smooth = 0;              // smooth motion: 0 off, 1 on 100 Hz+ displays, 2 always
     bool hq_audio = true;        // built-in HQ audio mixer on supported ROMs (changes RNG and RAM layout)
     std::array<std::string, kButtonCount> keys;  // SDL scancode names
 };

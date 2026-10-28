@@ -505,8 +505,9 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
                 kFlavors[st.flavor], kDisplayModes[st.fullscreen], std::to_string(st.scale) + "x",
                 st.sharp_filter ? "Sharp" : "Pixel", "", std::to_string(st.volume) + "%",
                 kPromptStyles[st.prompt_style], st.widescreen ? "On (16:9)" : "Off",
-                st.smooth == 2 ? "120 (always)" : !st.smooth ? "60"
-                : display_hz(win) >= 100 || display_hz(win) == 0 ? "120 (smooth)" : "120 (needs 120 Hz)",
+                st.smooth == 2 ? "Smooth (always)" : !st.smooth ? "60"
+                : display_hz(win) == 0 ? "Smooth"
+                : display_hz(win) >= 100 ? std::to_string(display_hz(win)) + " (smooth)" : "Smooth (needs 100 Hz+)",
                 st.hq_audio ? "On" : "Off", "", ""};
             const char* labels[kSettingRows] = {"Window flavor", "Display", "Window size", "Scaling",
                                                 "Screen colors", "Volume", "Button prompts", "Widescreen",
