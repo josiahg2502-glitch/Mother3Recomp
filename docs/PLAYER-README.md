@@ -38,7 +38,10 @@ MOTHER 3's own launcher opens: the party walks around outside Tazmily while you 
 **Controls** or **Mods**. Everything it shows is drawn from your ROM; no game art ships with the download.
 
 - **Settings:** window flavor (the game's Plain to Melon), display mode, window size, scaling, screen colors,
-  volume, **Button prompts**, **Frame rate**, and **Change game files** to pick a different ROM or BIOS.
+  volume, **Button prompts**, **Frame rate**, **Import a save file**, and **Change game files** to pick a different
+  ROM or BIOS.
+- **Import a save file:** bring over a save from another emulator (mGBA, VBA, RetroArch, My Boy!, etc.). Pick its
+  battery save (`.sav` or `.srm`, not a save state). Your current save is kept as `saves/mother3_en_v13.sav.bak`.
 - **Frame rate 120 (smooth):** on a 120 Hz (or faster) screen, an in-between frame is drawn between every two of
   the game's frames, so scrolling and walking move in half steps. The game itself still runs at its normal speed.
   On a 60 Hz screen it has no effect, and the launcher says so. If your screen is 120 Hz or faster but the game

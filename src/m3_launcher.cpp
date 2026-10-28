@@ -1,6 +1,7 @@
 #include "m3_launcher.h"
 
 #include "m3_mods.h"
+#include "m3_setup.h"
 
 #include <SDL.h>
 
@@ -252,7 +253,7 @@ struct Pads {
 enum class Page { Main, Settings, Controls, Mods };
 const char* const kItems[] = {"Play", "Settings", "Controls", "Mods", "Quit"};
 constexpr int kItemCount = 5;
-constexpr int kSettingRows = 11;  // 10 options + Change game files
+constexpr int kSettingRows = 12;  // 10 options + Import a save + Change game files
 constexpr int kControlRows = m3settings::kButtonCount + 1;  // buttons + Reset
 
 // Smooth motion only shows on a display of 100 Hz or more (m3_smooth.cpp).
@@ -433,6 +434,8 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
                         leave_page();
                         result = Result::ChangeFiles;
                         running = false;
+                    } else if (in == Input::Confirm && row == kSettingRows - 2) {
+                        m3setup::import_save(dir);
                     } else if (in == Input::Right || in == Input::Confirm) change_setting(1);
                     if (in == Input::Back) leave_page();
                     break;
@@ -504,12 +507,13 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
                 kPromptStyles[st.prompt_style], st.widescreen ? "On (16:9)" : "Off",
                 st.smooth == 2 ? "120 (always)" : !st.smooth ? "60"
                 : display_hz(win) >= 100 || display_hz(win) == 0 ? "120 (smooth)" : "120 (needs 120 Hz)",
-                st.hq_audio ? "On" : "Off", ""};
+                st.hq_audio ? "On" : "Off", "", ""};
             const char* labels[kSettingRows] = {"Window flavor", "Display", "Window size", "Scaling",
                                                 "Screen colors", "Volume", "Button prompts", "Widescreen",
-                                                "Frame rate", "HQ audio", "Change game files (ROM, BIOS)"};
+                                                "Frame rate", "HQ audio", "Import a save file (.sav, .srm)",
+                                                "Change game files (ROM, BIOS)"};
             for (int i = 0; i < kSettingRows; ++i) {
-                const int y = kPy + 8 + i * 10;  // 11 rows: same pitch as Controls
+                const int y = kPy + 6 + i * 10;  // 12 rows: same pitch as Controls
                 if (i == row) ui.cursor(kLabelX - 10, y + 4);
                 ui.text(labels[i], kLabelX, y);
                 std::string v = values[i];
@@ -517,7 +521,6 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
                     for (int s = 0; s < 5; ++s) if (st.screen == kScreens[s]) v = kScreenNames[s];
                 if (!v.empty()) ui.choice(v, kRight, y, i == row);
             }
-            ui.text("Left / Right changes a setting. Saved when you leave.", kLabelX, kHintY - 12, kDim);
             ui.text(hint("Change"), kLabelX, kHintY, kDim);
         } else if (page == Page::Controls) {
             cv.draw(page_win, kPx, kPy);
