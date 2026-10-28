@@ -18,6 +18,9 @@
 #include "m3_setup.h"
 #include "m3_smooth.h"
 #include "m3_widescreen.h"
+#if defined(MOTHER3_RETROACHIEVEMENTS)
+#include "retroachievements.h"
+#endif
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -266,6 +269,10 @@ int mother3_main(int argc, char** argv) {
     // shortcut: rewind/fast-forward stay desktop-only until rewind memory is measured on phones.
     opts.expose_assist_tools = false;
     opts.assist_tools_enabled_by_default = false;
+#if defined(MOTHER3_RETROACHIEVEMENTS)
+    // No-op unless the setup screen stored RetroAchievements credentials.
+    mother3::ra_install(opts, MOTHER3_ROM_FILE);
+#endif
 #else
     if (!m3_launcher_preboot(args)) return 0;
     {
@@ -284,7 +291,11 @@ int mother3_main(int argc, char** argv) {
     std::vector<char*> av;
     av.reserve(args.size());
     for (auto& arg : args) av.push_back(arg.data());
-    return gbarecomp::run_game(static_cast<int>(av.size()), av.data(), opts);
+    const int result = gbarecomp::run_game(static_cast<int>(av.size()), av.data(), opts);
+#if defined(MOTHER3_RETROACHIEVEMENTS)
+    mother3::ra_shutdown();
+#endif
+    return result;
 }
 
 #if defined(__ANDROID__)

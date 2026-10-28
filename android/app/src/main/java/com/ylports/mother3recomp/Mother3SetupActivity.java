@@ -34,6 +34,7 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
     private static final String[] PROMPT_STYLES =
         {"Auto", "Xbox", "PlayStation", "Nintendo", "On-screen buttons"};
     private android.widget.LinearLayout modList;
+    private android.widget.Button raButton;
 
     @Override
     protected boolean supportsAutomaticLaunch() { return false; }
@@ -48,6 +49,7 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        refreshRetroAchievementsButton();
         showNativeLogIfChanged();
     }
 
@@ -105,6 +107,12 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         });
         preferences.addView(prompts);
 
+        raButton = new android.widget.Button(this);
+        raButton.setAllCaps(false);
+        raButton.setOnClickListener(view -> showRetroAchievementsDialog());
+        preferences.addView(raButton);
+        refreshRetroAchievementsButton();
+
         android.widget.TextView modsTitle = new android.widget.TextView(this);
         modsTitle.setText("Mods (IPS / BPS / UPS, applied in name order; long-press to remove)");
         modsTitle.setTextColor(android.graphics.Color.rgb(164, 175, 207));
@@ -130,6 +138,97 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         button.setText("Copy diagnostics");
         button.setOnClickListener(view -> copyDiagnostics());
         preferences.addView(button);
+    }
+
+    private void refreshRetroAchievementsButton() {
+        if (raButton == null) return;
+        String user = RaBridge.savedUser(getFilesDir());
+        raButton.setText(user != null ? "RetroAchievements: " + user : "RetroAchievements: log in");
+    }
+
+    /** Log in (the password is used once for a token) or out; achievements are softcore. */
+    private void showRetroAchievementsDialog() {
+        String user = RaBridge.savedUser(getFilesDir());
+        if (user != null) {
+            new AlertDialog.Builder(this)
+                .setTitle("RetroAchievements")
+                .setMessage("Logged in as " + user + ".\n\n"
+                    + "Achievements unlock in softcore mode: RetroAchievements "
+                    + "accepts hardcore unlocks only from approved emulators.")
+                .setPositiveButton("OK", null)
+                .setNegativeButton("Log out", (dialog, which) -> {
+                    RaBridge.logout(getFilesDir());
+                    refreshRetroAchievementsButton();
+                })
+                .show();
+            return;
+        }
+        int pad = Math.round(16 * getResources().getDisplayMetrics().density);
+        android.widget.LinearLayout form = new android.widget.LinearLayout(this);
+        form.setOrientation(android.widget.LinearLayout.VERTICAL);
+        form.setPadding(pad, pad / 2, pad, 0);
+        android.widget.EditText userField = new android.widget.EditText(this);
+        userField.setHint("Username");
+        userField.setSingleLine(true);
+        userField.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+            | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        android.widget.EditText passwordField = new android.widget.EditText(this);
+        passwordField.setHint("Password");
+        passwordField.setSingleLine(true);
+        passwordField.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+            | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        android.widget.TextView status = new android.widget.TextView(this);
+        status.setText("Softcore mode. The password is used once to obtain a token and is not stored.");
+        form.addView(userField);
+        form.addView(passwordField);
+        form.addView(status);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("RetroAchievements")
+            .setView(form)
+            .setPositiveButton("Log in", null)
+            .setNegativeButton("Cancel", null)
+            .create();
+        dialog.setOnShowListener(shown -> {
+            android.widget.Button login = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            login.setOnClickListener(view -> {
+                String name = userField.getText().toString().trim();
+                String password = passwordField.getText().toString();
+                if (name.isEmpty() || password.isEmpty()) {
+                    status.setText("Enter username and password.");
+                    return;
+                }
+                login.setEnabled(false);
+                status.setText("Logging in…");
+                new Thread(() -> {
+                    String error = null;
+                    String loggedIn = null;
+                    try {
+                        String[] credentials = RaBridge.login(name, password);
+                        RaBridge.saveCredentials(getFilesDir(), credentials[0], credentials[1]);
+                        loggedIn = credentials[0];
+                    } catch (IOException | RuntimeException failure) {
+                        error = failure.getMessage() != null ? failure.getMessage()
+                                                             : failure.getClass().getSimpleName();
+                    }
+                    final String message = error;
+                    final String account = loggedIn;
+                    runOnUiThread(() -> {
+                        if (isFinishing() || isDestroyed()) return;
+                        if (message == null) {
+                            dialog.dismiss();
+                            refreshRetroAchievementsButton();
+                            android.widget.Toast.makeText(this, "RetroAchievements: logged in as " + account,
+                                android.widget.Toast.LENGTH_SHORT).show();
+                        } else {
+                            status.setText(message);
+                            login.setEnabled(true);
+                        }
+                    });
+                }, "ra-login").start();
+            });
+        });
+        dialog.show();
     }
 
     private void styleOption(android.widget.CompoundButton option) {

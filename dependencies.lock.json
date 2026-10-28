@@ -20,5 +20,9 @@
     "revision": "41c88ffea852b970af8d50312620b17404e455ad",
     "patch": "patches/recomp-ui-runtime.patch",
     "sha256": "671c2c049b5162a2fb63aa15359ad7dfadb028c1cb74f0e6d29a8fc78365718d"
+  },
+  "third_party/rcheevos": {
+    "url": "https://github.com/RetroAchievements/rcheevos.git",
+    "revision": "1433173220a7eaede6a9ed7a18e94117be1821e0"
   }
 }
