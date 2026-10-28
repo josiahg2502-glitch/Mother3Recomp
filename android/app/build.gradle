@@ -47,6 +47,9 @@ ext.gbaGame = [
     engineRoot     : engineRoot,
     recompUiRoot   : recompUiRoot,
     nativeJobs     : 2,
+    // -Pm3Device=rg556 builds the Anbernic RG556 preset (see SDL_main).
+    cmakeArguments : providers.gradleProperty("m3Device").orNull == "rg556"
+                         ? ["-DMOTHER3_TUNE_RG556=ON"] : [],
     releaseAbis    : ["arm64-v8a", "x86_64"],  // x86_64 runs natively on BlueStacks and Chromebooks
     debugAbis      : ["arm64-v8a", "x86_64"],
 ]
