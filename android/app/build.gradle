@@ -25,8 +25,8 @@ def androidToml = providers.gradleProperty("gbaGameToml").orNull
 
 ext.gbaGame = [
     applicationId  : "com.ylports.mother3recomp.en.dev",
-    versionCode    : 107,
-    versionName    : "1.0.7",
+    versionCode    : 108,
+    versionName    : "1.0.8",
     title          : title,
     romLabel       : "MOTHER 3 ROM",
     romSha1        : romShas,
@@ -35,7 +35,7 @@ ext.gbaGame = [
     romFile        : romFile,
     biosRequired   : false,
     orientation    : "landscape",
-    payloadVersion : "1.0.7",
+    payloadVersion : "1.0.8",
     setupNote      : "Choose a clean Japanese ROM and an IPS, IPS32, BPS, or UPS fan patch. " +
                      "The Spanish translation is supported.",
     variant        : variant,
