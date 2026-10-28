@@ -39,6 +39,13 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
     protected boolean supportsAutomaticLaunch() { return false; }
 
     @Override
+    protected void onCreate(android.os.Bundle savedInstanceState) {
+        // Before PLAY: the engine resumes only markers that name the battery save.
+        SuspendMarker.upgrade(getFilesDir(), org.gbarecomp.GbaGameConfig.load(this).romFile);
+        super.onCreate(savedInstanceState);
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
         showNativeLogIfChanged();
