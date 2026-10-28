@@ -717,7 +717,14 @@ bool mother3_rom_post_load(std::uint8_t* rom, std::size_t rom_size, const char* 
     // mother3_bezel.dll draws a bezel composed from this ROM; refresh it if the flavor changed.
     m3bezel::ensure(rom, rom_size, dir, m3settings::load(dir).flavor);
 #endif
-    const bool hq = mother3_apply_hq_audio_patch(rom, rom_size, source_sha1);
+    // HQ audio is on by default. The patch also moves sound buffers in RAM
+    // and changes the game's RNG (see its README), so players who need the
+    // stock game (speedruns, RAM watchers) can turn it off.
+    bool hq = false;
+    if (m3settings::load(dir).hq_audio)
+        hq = mother3_apply_hq_audio_patch(rom, rom_size, source_sha1);
+    else
+        std::fprintf(stderr, "[mother3:hq-audio] off in the launcher settings; stock mixer\n");
     return code_mods || hq;
 }
 
