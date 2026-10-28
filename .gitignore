@@ -64,3 +64,4 @@ build-android-host/
 
 # Pinned by dependencies.lock.json, fetched by tools/setup_deps.py
 third_party/rcheevos/
+/third_party/rcheevos/
