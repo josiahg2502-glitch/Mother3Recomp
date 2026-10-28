@@ -156,7 +156,8 @@ endif()
 if(WIN32)
     enable_language(RC)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/mother3_icon.rc"
-        "1 ICON \"${CMAKE_CURRENT_SOURCE_DIR}/Mother 3.ico\"\n")
+        "1 ICON \"${CMAKE_CURRENT_SOURCE_DIR}/Mother 3.ico\"\n"
+        "1 24 \"${CMAKE_CURRENT_SOURCE_DIR}/src/mother3.manifest\"\n")
     target_sources(${MOTHER3_TARGET} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/mother3_icon.rc")
     add_library(mother3_bezel SHARED interposer/mother3_bezel.c)
     set_target_properties(mother3_bezel PROPERTIES PREFIX "")

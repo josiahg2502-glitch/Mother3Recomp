@@ -136,13 +136,31 @@ int mother3_main(int argc, char** argv) {
     }
 #endif
 #if defined(_WIN32)
-    char hook_path[MAX_PATH];
-    if (GetModuleFileNameA(nullptr, hook_path, MAX_PATH)) {
-        if (char* slash = std::strrchr(hook_path, '\\')) {
-            *slash = 0;
-            std::string hook = std::string(hook_path) + "\\mother3_bezel.dll";
-            if (GetFileAttributesA(hook.c_str()) != INVALID_FILE_ATTRIBUTES)
-                _putenv_s("SDL_DYNAMIC_API", hook.c_str());
+    // The bezel hooks SDL through SDL_DYNAMIC_API, which SDL loads with LoadLibraryA:
+    // a folder path with characters outside the ANSI code page, a path over MAX_PATH,
+    // or a DLL blocked by antivirus makes SDL pop up an error on every launch. Hand it
+    // the 8.3 short path and set the variable only once a test load has worked.
+    wchar_t exe_path[32768];
+    const DWORD exe_len = GetModuleFileNameW(nullptr, exe_path, 32768);
+    if (exe_len > 0 && exe_len < 32768) {
+        std::wstring hook(exe_path, exe_len);
+        hook = hook.substr(0, hook.find_last_of(L'\\') + 1) + L"mother3_bezel.dll";
+        wchar_t short_path[MAX_PATH];
+        const DWORD short_len = GetFileAttributesW(hook.c_str()) == INVALID_FILE_ATTRIBUTES
+            ? 0 : GetShortPathNameW(hook.c_str(), short_path, MAX_PATH);
+        char ansi[MAX_PATH * 4];
+        BOOL lossy = FALSE;
+        const bool utf8 = GetACP() == CP_UTF8;  // the manifest's activeCodePage (Windows 10 1903+)
+        const int ansi_len = short_len > 0 && short_len < MAX_PATH
+            ? WideCharToMultiByte(CP_ACP, utf8 ? 0 : WC_NO_BEST_FIT_CHARS, short_path, -1, ansi, sizeof ansi,
+                                  nullptr, utf8 ? nullptr : &lossy)
+            : 0;
+        HMODULE probe = ansi_len > 0 && !lossy ? LoadLibraryA(ansi) : nullptr;
+        if (probe) {
+            FreeLibrary(probe);
+            _putenv_s("SDL_DYNAMIC_API", ansi);
+        } else if (short_len > 0) {
+            std::fprintf(stderr, "mother3: bezel unavailable (mother3_bezel.dll could not be loaded from this folder)\n");
         }
     }
 #endif
