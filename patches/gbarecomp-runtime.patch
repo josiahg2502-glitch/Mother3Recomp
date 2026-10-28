@@ -3050,3 +3050,15 @@ diff --git a/src/gba/gba_ppu.cpp b/src/gba/gba_ppu.cpp
  
  namespace {
  
+diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
+--- a/src/runtime/runtime.cpp
++++ b/src/runtime/runtime.cpp
+@@ -1943,7 +1943,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+         bus.audio().shadow_hook_pcs(g_runtime_observed_pcs,
+                                     RUNTIME_MAX_OBSERVED_PCS));
+     g_runtime_dispatch_observer = g_runtime_observed_pc_count
+-        ? [](uint32_t pc, int thumb) {
++        ? +[](uint32_t pc, int thumb) {  // + : GCC 11 won't pick a common type with nullptr
+               if (gba::GbaBus* b = gbarecomp::active_bus())
+                   b->audio().shadow_driver_tick(pc, thumb != 0);
+           }
