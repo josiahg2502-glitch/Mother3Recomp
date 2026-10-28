@@ -61,6 +61,8 @@ shutil.copy2(ROOT / "LICENSE", stage)
 licenses = stage / "Licenses"
 licenses.mkdir()
 shutil.copy2(ROOT / "docs/THIRD-PARTY.md", licenses)
+# The launcher's fallback font (src/m3_launcher_font.h) is drawn from Pixelify Sans.
+shutil.copy2(ROOT / "android/app/src/main/res/raw/pixelify_sans_ofl.txt", licenses / "PixelifySans-OFL.txt")
 cache = a.binary.parent / "CMakeCache.txt"
 paths = {}
 if cache.is_file():

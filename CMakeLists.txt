@@ -102,13 +102,61 @@ target_include_directories(${MOTHER3_TARGET} PRIVATE
     "${GBARECOMP_ROOT}/src/runtime"
     "${GBARECOMP_ROOT}/src/debug")
 
-target_link_libraries(${MOTHER3_TARGET} PRIVATE
-    "-Wl,--start-group"
-    gbarecomp_runtime
-    gbarecomp_debug
-    gbarecomp_gba
-    gbarecomp_armv4t
-    "-Wl,--end-group")
+# Apple's linker resolves cyclic archive references on its own and rejects
+# the GNU group flags.
+if(APPLE)
+    target_link_libraries(${MOTHER3_TARGET} PRIVATE
+        gbarecomp_runtime
+        gbarecomp_debug
+        gbarecomp_gba
+        gbarecomp_armv4t)
+else()
+    target_link_libraries(${MOTHER3_TARGET} PRIVATE
+        "-Wl,--start-group"
+        gbarecomp_runtime
+        gbarecomp_debug
+        gbarecomp_gba
+        gbarecomp_armv4t
+        "-Wl,--end-group")
+endif()
+
+# RetroAchievements (softcore) for Android: rcheevos checked out at
+# third_party/rcheevos by tools/setup_deps.py (pinned in dependencies.lock.json).
+set(RCHEEVOS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rcheevos"
+    CACHE PATH "Path to the rcheevos checkout")
+option(MOTHER3_RETROACHIEVEMENTS "Android: RetroAchievements support" ON)
+if(ANDROID AND MOTHER3_RETROACHIEVEMENTS)
+    if(EXISTS "${RCHEEVOS_ROOT}/include/rc_client.h")
+        file(GLOB RCHEEVOS_SOURCES CONFIGURE_DEPENDS
+            "${RCHEEVOS_ROOT}/src/rcheevos/*.c"
+            "${RCHEEVOS_ROOT}/src/rapi/*.c")
+        list(APPEND RCHEEVOS_SOURCES
+            "${RCHEEVOS_ROOT}/src/rc_client.c"
+            "${RCHEEVOS_ROOT}/src/rc_compat.c"
+            "${RCHEEVOS_ROOT}/src/rc_util.c"
+            "${RCHEEVOS_ROOT}/src/rc_version.c"
+            "${RCHEEVOS_ROOT}/src/rhash/md5.c")
+        add_library(rcheevos STATIC ${RCHEEVOS_SOURCES})
+        target_include_directories(rcheevos
+            PUBLIC "${RCHEEVOS_ROOT}/include" "${RCHEEVOS_ROOT}/src/rhash"
+            PRIVATE "${RCHEEVOS_ROOT}/src")
+        set_target_properties(rcheevos PROPERTIES
+            C_STANDARD 99 POSITION_INDEPENDENT_CODE ON)
+        target_sources(${MOTHER3_TARGET} PRIVATE src/retroachievements.cpp)
+        target_link_libraries(${MOTHER3_TARGET} PRIVATE rcheevos)
+        target_compile_definitions(${MOTHER3_TARGET} PRIVATE
+            MOTHER3_RETROACHIEVEMENTS=1
+            MOTHER3_ROM_FILE="roms/mother3_en_v13.gba")
+    else()
+        message(WARNING "rcheevos not found at ${RCHEEVOS_ROOT}; "
+            "building without RetroAchievements (run tools/setup_deps.py).")
+    endif()
+endif()
+
+option(MOTHER3_TUNE_RG556 "Anbernic RG556 preset: OpenSL ES, smaller audio cushion, big cores" OFF)
+if(MOTHER3_TUNE_RG556)
+    target_compile_definitions(${MOTHER3_TARGET} PRIVATE MOTHER3_TUNE_RG556)
+endif()
 
 target_compile_definitions(${MOTHER3_TARGET} PRIVATE
     GBARECOMP_DEFAULT_DEBUG_PORT=19893

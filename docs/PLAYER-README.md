@@ -38,15 +38,21 @@ MOTHER 3's own launcher opens: the party walks around outside Tazmily while you 
 **Controls** or **Mods**. Everything it shows is drawn from your ROM; no game art ships with the download.
 
 - **Settings:** window flavor (the game's Plain to Melon), display mode, window size, scaling, screen colors,
-  volume, **Button prompts**, **Frame rate**, and **Change game files** to pick a different ROM or BIOS.
-- **Frame rate 120 (smooth):** on a 120 Hz (or faster) screen, an in-between frame is drawn between every two of
-  the game's frames, so scrolling and walking move in half steps. The game itself still runs at its normal speed.
-  On a 60 Hz screen it has no effect, and the launcher says so. If your screen is 120 Hz or faster but the game
-  still shows 60 fps, choose **120 (always)**, which skips the screen check.
-- **Japanese (untranslated):** pick the Japanese ROM and answer **Yes** to play it in Japanese. The launcher needs a
-  translated ROM to draw itself, so the game starts directly; run with `--classic-launcher` to pick other files.
-- **Other translations** built on the English v1.3 layout (such as Spanish) open the launcher too. A ROM the launcher
-  can't draw from starts the game directly, using the settings from the last time you used the launcher.
+  volume, **Button prompts**, **Frame rate**, **Import a save file**, and **Change game files** to pick a different
+  ROM or BIOS.
+- **Import a save file:** bring over a save from another emulator (mGBA, VBA, RetroArch, My Boy!, etc.). Pick its
+  battery save (`.sav` or `.srm`, not a save state). Your current save is kept as `saves/mother3_en_v13.sav.bak`.
+  On Android, use **Import a save from another emulator** on the setup screen.
+- **Frame rate (smooth):** on a 100 Hz or faster screen (120, 144, 165, 240 Hz...), a frame is drawn for every
+  refresh of the screen, each at its own moment between two of the game's frames, so scrolling and walking move
+  in smaller steps. The launcher shows your screen's rate, such as **144 (smooth)**. The game itself still runs at
+  its normal speed. On a 60 Hz screen it has no effect, and the launcher says so. If your screen is fast but the
+  game still shows 60 fps, choose **Smooth (always)**, which skips the screen check.
+- **Japanese (untranslated):** pick the Japanese ROM and answer **Yes** to play it in Japanese. The launcher opens as
+  usual, with its own font, since the Japanese ROM has no English letters.
+- **Other translations** (Spanish, Italian, Brazilian Portuguese and others) open the launcher too; when a ROM's font
+  differs from English v1.3's, the launcher uses its own font. A ROM the launcher can't draw from starts the game
+  directly, using the settings from the last time you used the launcher.
 - **Controls:** pick a GBA button, then press the new key or controller button; whichever you press is the one
   that changes (Escape cancels). On controllers the left stick always moves; the D-pad is the rebindable second input.
 - **Getting around:** each page shows its buttons at the bottom. B (or Z / Escape) goes back, and LB / RB

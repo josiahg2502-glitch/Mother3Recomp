@@ -1,6 +1,7 @@
 #include "m3_launcher.h"
 
 #include "m3_mods.h"
+#include "m3_setup.h"
 
 #include <SDL.h>
 
@@ -252,7 +253,7 @@ struct Pads {
 enum class Page { Main, Settings, Controls, Mods };
 const char* const kItems[] = {"Play", "Settings", "Controls", "Mods", "Quit"};
 constexpr int kItemCount = 5;
-constexpr int kSettingRows = 10;  // 9 options + Change game files
+constexpr int kSettingRows = 12;  // 10 options + Import a save + Change game files
 constexpr int kControlRows = m3settings::kButtonCount + 1;  // buttons + Reset
 
 // Smooth motion only shows on a display of 100 Hz or more (m3_smooth.cpp).
@@ -327,6 +328,8 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
     Walker walker;
     Stick stick;
     int row = 0, frame = 0;
+    double ticks_due = 0;  // 60 Hz steps owed to the party walk
+    Uint64 last_tick = SDL_GetPerformanceCounter();
     bool capturing = false, running = true, using_pad = false;
     Result result = Result::Quit;
 
@@ -372,6 +375,7 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
             case 6: st.prompt_style = (st.prompt_style + 5 + delta) % 5; break;
             case 7: st.widescreen = !st.widescreen; break;
             case 8: st.smooth = (st.smooth + 3 + delta) % 3; break;
+            case 9: st.hq_audio = !st.hq_audio; break;
         }
     };
 
@@ -432,6 +436,8 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
                         leave_page();
                         result = Result::ChangeFiles;
                         running = false;
+                    } else if (in == Input::Confirm && row == kSettingRows - 2) {
+                        m3setup::import_save(dir);
                     } else if (in == Input::Right || in == Input::Confirm) change_setting(1);
                     if (in == Input::Back) leave_page();
                     break;
@@ -461,7 +467,27 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
         }
         if (built_flavor != st.flavor) build_windows();
 
-        walker.tick();
+        // The party walks 60 steps a second whatever the display's refresh rate:
+        // vsync alone ran it 4x fast on a 240 Hz screen. A stall skips ahead at most 4.
+        const Uint64 now = SDL_GetPerformanceCounter();
+        ticks_due = std::min(ticks_due + double(now - last_tick) * 60.0 / double(SDL_GetPerformanceFrequency()), 4.0);
+        last_tick = now;
+        if (ticks_due < 1.0) SDL_Delay(1);  // in case vsync isn't on
+        for (; ticks_due >= 1.0; ticks_due -= 1.0) {
+            walker.tick();
+            ++frame;
+            for (const char* q = pad_script; q && *q;) {
+                char* end;
+                const long at = std::strtol(q, &end, 10), button = *end == ':' ? std::strtol(end + 1, &end, 10) : -1;
+                if (at == frame && button >= 0) {
+                    SDL_Event ev{};
+                    ev.type = SDL_CONTROLLERBUTTONDOWN;
+                    ev.cbutton.button = static_cast<Uint8>(button);
+                    SDL_PushEvent(&ev);
+                }
+                q = *end == ',' ? end + 1 : nullptr;
+            }
+        }
         const int cam_x = std::clamp(kCamera.x, 0, scene.w - kW);
         const int cam_y = std::clamp(kCamera.y, 0, scene.h - kH);
         Canvas& cv = ui.cv;
@@ -501,13 +527,16 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
                 kFlavors[st.flavor], kDisplayModes[st.fullscreen], std::to_string(st.scale) + "x",
                 st.sharp_filter ? "Sharp" : "Pixel", "", std::to_string(st.volume) + "%",
                 kPromptStyles[st.prompt_style], st.widescreen ? "On (16:9)" : "Off",
-                st.smooth == 2 ? "120 (always)" : !st.smooth ? "60"
-                : display_hz(win) >= 100 || display_hz(win) == 0 ? "120 (smooth)" : "120 (needs 120 Hz)", ""};
+                st.smooth == 2 ? "Smooth (always)" : !st.smooth ? "60"
+                : display_hz(win) == 0 ? "Smooth"
+                : display_hz(win) >= 100 ? std::to_string(display_hz(win)) + " (smooth)" : "Smooth (needs 100 Hz+)",
+                st.hq_audio ? "On" : "Off", "", ""};
             const char* labels[kSettingRows] = {"Window flavor", "Display", "Window size", "Scaling",
                                                 "Screen colors", "Volume", "Button prompts", "Widescreen",
-                                                "Frame rate", "Change game files (ROM, BIOS)"};
+                                                "Frame rate", "HQ audio", "Import a save file (.sav, .srm)",
+                                                "Change game files (ROM, BIOS)"};
             for (int i = 0; i < kSettingRows; ++i) {
-                const int y = kPy + 8 + i * 11;
+                const int y = kPy + 6 + i * 10;  // 12 rows: same pitch as Controls
                 if (i == row) ui.cursor(kLabelX - 10, y + 4);
                 ui.text(labels[i], kLabelX, y);
                 std::string v = values[i];
@@ -515,7 +544,6 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
                     for (int s = 0; s < 5; ++s) if (st.screen == kScreens[s]) v = kScreenNames[s];
                 if (!v.empty()) ui.choice(v, kRight, y, i == row);
             }
-            ui.text("Left / Right changes a setting. Saved when you leave.", kLabelX, kHintY - 12, kDim);
             ui.text(hint("Change"), kLabelX, kHintY, kDim);
         } else if (page == Page::Controls) {
             cv.draw(page_win, kPx, kPy);
@@ -570,20 +598,8 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
         SDL_RenderClear(ren);
         SDL_RenderCopy(ren, tex, nullptr, nullptr);
         SDL_RenderPresent(ren);
-        ++frame;
-        for (const char* q = pad_script; q && *q;) {
-            char* end;
-            const long at = std::strtol(q, &end, 10), button = *end == ':' ? std::strtol(end + 1, &end, 10) : -1;
-            if (at == frame && button >= 0) {
-                SDL_Event ev{};
-                ev.type = SDL_CONTROLLERBUTTONDOWN;
-                ev.cbutton.button = static_cast<Uint8>(button);
-                SDL_PushEvent(&ev);
-            }
-            q = *end == ',' ? end + 1 : nullptr;
-        }
 
-        if (shot && frame == shot_frame) {
+        if (shot && frame >= shot_frame) {
             if (SDL_Surface* s = SDL_CreateRGBSurfaceWithFormatFrom(cv.px.data(), kW, kH, 32, kW * 4,
                                                                     SDL_PIXELFORMAT_ARGB8888)) {
                 SDL_SaveBMP(s, shot);

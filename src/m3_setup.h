@@ -23,4 +23,8 @@ bool load(const std::string& dir, Files* out);
 // Returns false if the player cancels.
 bool choose(const std::string& dir, Files* files, bool bios);
 
+// Asks for a save from another emulator (.sav / .srm) and copies it over the
+// game's save, keeping the old one as a .bak. Returns true once imported.
+bool import_save(const std::string& dir);
+
 }  // namespace m3setup

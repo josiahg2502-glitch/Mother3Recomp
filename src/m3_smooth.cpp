@@ -70,8 +70,12 @@ struct State {
     bool fast_display = false;
     int display_check_in = 0;
     int display_hz = -1;
-    bool always = false;  // Frame rate "120 (always)": skip the display check
+    bool always = false;  // Frame rate "Smooth (always)": skip the display check
     std::vector<std::uint32_t> depth;
+    // Screen velocity (native px per frame) of each BG layer on each line, and
+    // of each sprite, from the previous frame to frame `frame`.
+    int bg_vx[160][4] = {}, bg_vy[160][4] = {};
+    int obj_vx[128] = {}, obj_vy[128] = {};
 };
 State g;
 
@@ -94,7 +98,7 @@ bool display_is_fast() {
     const int hz = SDL_GetCurrentDisplayMode(index < 0 ? 0 : index, &mode) == 0 ? mode.refresh_rate : 0;
     const bool fast = hz >= 100 || hz == 0;  // 0 = the driver doesn't say; the player chose 120
     if (fast != g.fast_display || g.display_hz != hz) {
-        std::fprintf(stderr, "m3-smooth: display %d reports %d Hz -> 120 fps %s\n", index, hz, fast ? "on" : "off");
+        std::fprintf(stderr, "m3-smooth: display %d reports %d Hz -> smooth motion %s\n", index, hz, fast ? "on" : "off");
         std::fflush(stderr);
     }
     g.display_hz = hz;
@@ -125,21 +129,19 @@ void dump(const std::uint8_t* mid, std::uint32_t W, std::uint32_t H, const std::
     }
 }
 
-int interpolate(const gba::GbaPpu* ppu, const std::uint8_t* rgb, std::uint32_t w, std::uint32_t h,
-                std::uint8_t* out) {
-    const std::uint16_t* tags = ppu->latched_tags();
-    const Line* lines = ppu->latched_motion_lines();
-    if (!tags || !lines || !display_is_fast()) {
-        g.have_prev = false;
-        return 0;
-    }
+// Measures this frame's motion once; the engine draws several moments of it.
+void measure(const gba::GbaPpu* ppu, const Line* lines, std::uint32_t w, std::uint32_t h) {
     const std::uint64_t frame = ppu->frame_count();
+    if (g.have_prev && frame == g.frame && w == g.w && h == g.h) return;
     const bool consecutive = g.have_prev && frame == g.frame + 1 && w == g.w && h == g.h;
-    const int top = static_cast<int>(ppu->view_extra_top());
-
-    // Screen velocity (native px per frame) of each BG layer on each line, and of each sprite.
-    int bg_vx[160][4] = {}, bg_vy[160][4] = {};
-    int obj_vx[128] = {}, obj_vy[128] = {};
+    auto& bg_vx = g.bg_vx;
+    auto& bg_vy = g.bg_vy;
+    auto& obj_vx = g.obj_vx;
+    auto& obj_vy = g.obj_vy;
+    std::memset(bg_vx, 0, sizeof bg_vx);
+    std::memset(bg_vy, 0, sizeof bg_vy);
+    std::memset(obj_vx, 0, sizeof obj_vx);
+    std::memset(obj_vy, 0, sizeof obj_vy);
     if (consecutive) {
         for (int y = 0; y < 160; ++y)
             for (int bg = 0; bg < 4; ++bg) {
@@ -169,24 +171,50 @@ int interpolate(const gba::GbaPpu* ppu, const std::uint8_t* rgb, std::uint32_t w
             if (best >= 0) obj_vx[i] = now.x - before[best].x, obj_vy[i] = now.y - before[best].y;
         }
     }
+    g.have_prev = true;
+    g.frame = frame;
+    g.w = w;
+    g.h = h;
+    std::copy_n(lines, 160, g.lines.begin());
+    std::memcpy(g.oam.data(), ppu->latched_oam(), g.oam.size());
+}
 
-    // Each native pixel lands at its halfway position (2x grid: 2p - v) as a
-    // 2x2 block; the front-most layer wins where blocks overlap.
+int interpolate(const gba::GbaPpu* ppu, const std::uint8_t* rgb, std::uint32_t w, std::uint32_t h,
+                std::uint8_t* out, float t) {
+    const std::uint16_t* tags = ppu->latched_tags();
+    const Line* lines = ppu->latched_motion_lines();
+    if (!tags || !lines || !display_is_fast()) {
+        g.have_prev = false;
+        return 0;
+    }
+    measure(ppu, lines, w, h);
+    const int top = static_cast<int>(ppu->view_extra_top());
+
+    // Each native pixel moves back by the part of its motion still to come,
+    // on the 2x grid so half-pixel steps show.
+    const float back = 2.0f * (1.0f - std::clamp(t, 0.0f, 1.0f));
+    auto step = [back](int v) { return static_cast<int>(std::lround(back * static_cast<float>(v))); };
+    int bg_dx[160][4], bg_dy[160][4], obj_dx[128], obj_dy[128];
+    for (int y = 0; y < 160; ++y)
+        for (int bg = 0; bg < 4; ++bg) bg_dx[y][bg] = step(g.bg_vx[y][bg]), bg_dy[y][bg] = step(g.bg_vy[y][bg]);
+    for (int i = 0; i < 128; ++i) obj_dx[i] = step(g.obj_vx[i]), obj_dy[i] = step(g.obj_vy[i]);
+
+    // Each native pixel lands as a 2x2 block; the front-most layer wins where blocks overlap.
     const std::uint32_t W = 2 * w, H = 2 * h;
     constexpr std::uint32_t kHole = 0x10000;
     g.depth.assign(static_cast<std::size_t>(W) * H, kHole);
     for (std::uint32_t y = 0; y < h; ++y) {
         const int ny = static_cast<int>(y) - top;
         for (std::uint32_t x = 0; x < w; ++x) {
-            const std::uint16_t t = tags[y * w + x];
-            int vx = 0, vy = 0;
-            if (t < 0xFFFE) {
-                const int slot = t & 255;
-                if (slot < 128) vx = obj_vx[slot], vy = obj_vy[slot];
-                else if (slot < 132 && ny >= 0 && ny < 160) vx = bg_vx[ny][slot - 128], vy = bg_vy[ny][slot - 128];
+            const std::uint16_t tag = tags[y * w + x];
+            int dx = 0, dy = 0;
+            if (tag < 0xFFFE) {
+                const int slot = tag & 255;
+                if (slot < 128) dx = obj_dx[slot], dy = obj_dy[slot];
+                else if (slot < 132 && ny >= 0 && ny < 160) dx = bg_dx[ny][slot - 128], dy = bg_dy[ny][slot - 128];
             }
             const std::uint8_t* c = rgb + 3 * (y * w + x);
-            const int X0 = 2 * static_cast<int>(x) - vx, Y0 = 2 * static_cast<int>(y) - vy;
+            const int X0 = 2 * static_cast<int>(x) - dx, Y0 = 2 * static_cast<int>(y) - dy;
             for (int j = 0; j < 2; ++j) {
                 const int Y = Y0 + j;
                 if (Y < 0 || Y >= static_cast<int>(H)) continue;
@@ -194,8 +222,8 @@ int interpolate(const gba::GbaPpu* ppu, const std::uint8_t* rgb, std::uint32_t w
                     const int X = X0 + i;
                     if (X < 0 || X >= static_cast<int>(W)) continue;
                     const std::size_t at = static_cast<std::size_t>(Y) * W + X;
-                    if (t >= g.depth[at]) continue;
-                    g.depth[at] = t;
+                    if (tag >= g.depth[at]) continue;
+                    g.depth[at] = tag;
                     std::memcpy(out + 3 * at, c, 3);
                 }
             }
@@ -223,12 +251,6 @@ int interpolate(const gba::GbaPpu* ppu, const std::uint8_t* rgb, std::uint32_t w
     }
 
     dump(out, W, H, rgb, w, h);
-    g.have_prev = true;
-    g.frame = frame;
-    g.w = w;
-    g.h = h;
-    std::copy_n(lines, 160, g.lines.begin());
-    std::memcpy(g.oam.data(), ppu->latched_oam(), g.oam.size());
     return 1;
 }
 

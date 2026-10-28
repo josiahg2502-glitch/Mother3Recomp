@@ -7,11 +7,11 @@ Bring your own ROM and game files.
 
 | Platform | Version | Download |
 | --- | --- | --- |
-| Windows x64 | 1.0.7 | [Windows ZIP](https://github.com/josiahg2502-glitch/Mother3Recomp/releases/download/v1.0.7/Mother3Recomp-v1.0.7-windows-x64.zip) |
-| Linux x86_64 / Steam Deck | 1.0.7 | [Linux archive](https://github.com/josiahg2502-glitch/Mother3Recomp/releases/download/v1.0.7/Mother3Recomp-v1.0.7-linux-x86_64.tar.gz) |
-| Android (ARM64 and x86_64) | 1.0.7 | [Android APK](https://github.com/josiahg2502-glitch/Mother3Recomp/releases/download/v1.0.7/Mother3Recomp-v1.0.7-android.apk) |
+| Windows x64 | 1.0.8 | [Windows ZIP](https://github.com/josiahg2502-glitch/Mother3Recomp/releases/download/v1.0.8/Mother3Recomp-v1.0.8-windows-x64.zip) |
+| Linux x86_64 / Steam Deck | 1.0.8 | [Linux archive](https://github.com/josiahg2502-glitch/Mother3Recomp/releases/download/v1.0.8/Mother3Recomp-v1.0.8-linux-x86_64.tar.gz) |
+| Android (ARM64 and x86_64) | 1.0.8 | [Android APK](https://github.com/josiahg2502-glitch/Mother3Recomp/releases/download/v1.0.8/Mother3Recomp-v1.0.8-android.apk) |
 
-**🎉 v1.0.7 is a BIG UPDATE for all platforms:** MOTHER 3's own launcher, true 16:9 widescreen, button prompts that match your controller, mods, and a rebuilt Android version. [What's new](https://github.com/josiahg2502-glitch/Mother3Recomp/releases/tag/v1.0.7)
+**v1.0.8:** smooth motion at your screen's full refresh rate (144, 165, 240 Hz), save import from other emulators, a newer engine, a MOTHER 3-styled in-game menu, widescreen fixes, the launcher for the Japanese ROM and every translation, and RetroAchievements on Android. [What's new](https://github.com/josiahg2502-glitch/Mother3Recomp/releases/tag/v1.0.8)
 
 ## Features
 
@@ -50,7 +50,7 @@ Everything in these pictures is drawn from the player's own ROM; none of it ship
 Released and actively maintained. Project metadata follows the [recomp.board outline](https://recomp.fyi/spec) in [`.recomp.json`](.recomp.json).
 
 Language patches include Spanish; compatibility and speed vary by patch.
-HQ Audio mixing is built in and applies automatically to the Japanese ROM and supported fan translations.
+HQ Audio mixing is built in and applies automatically to the Japanese ROM and supported fan translations. It changes the game's RNG and moves sound buffers in RAM, so it can be turned off under Settings > HQ audio (Android: the HQ audio switch) for speedruns or RAM tools.
 Android has separate controls for system bars, display fill and on-screen buttons. Device-specific performance reports remain under investigation.
 
 [Building from source](docs/BUILDING.md) · [Android source](android/) · [Credits](CREDITS.md) · [License](LICENSE)

@@ -9,7 +9,6 @@
 #include "m3_prompts.h"
 #include "m3_bezel.h"
 #include "m3_mods.h"
-#include "m3_widescreen.h"
 #include "m3_settings.h"
 #include <SDL.h>
 #include <string>
@@ -544,14 +543,20 @@ int run_hq_mixer_native(uint32_t mixer_start) {
 //    any interior PC (or forced interp mode) uses the reference interpreter bridge.
 // 2. 0x03000000..0x03000400: static AOT holds vanilla SoundMainRAM, which the
 //    HQ Sound Mixing Mod repurposes as `hq_buffer` (16-bit audio sample buffer).
+// Both can only happen when the image carries changed code: the HQ patch or a
+// code mod. On the stock image neither range ever changes, so the checks are
+// skipped: they ran on every dispatch inside the game's sound mixer loops, and
+// their bus reads took about a tenth of the game thread on an Anbernic RG556.
+bool g_mutable_code = true;  // set by mother3_rom_post_load
+
 int force_interp_mutable_ram(uint32_t pc, int thumb) {
     // Runs at every dispatch, so only a counter here; tick() limits itself further.
     static unsigned s_dispatches = 0;
     if ((++s_dispatches & 0x3FFu) == 0) {
         m3mods::apply_deferred();  // no-op after the first call
-        m3prompts::tick();
-        m3widescreen::tick();
+        m3prompts::tick();  // the widescreen model is checked at vblank (main.cpp)
     }
+    if (!g_mutable_code) return 0;
     // The two load ranges overlap, so pick the one whose mixer is actually installed.
     uint32_t mixer_start = 0u;
     for (uint32_t start : {kHqMixerFanStart, kHqMixerJapaneseStart}) {
@@ -719,7 +724,15 @@ bool mother3_rom_post_load(std::uint8_t* rom, std::size_t rom_size, const char* 
     // mother3_bezel.dll draws a bezel composed from this ROM; refresh it if the flavor changed.
     m3bezel::ensure(rom, rom_size, dir, m3settings::load(dir).flavor);
 #endif
-    const bool hq = mother3_apply_hq_audio_patch(rom, rom_size, source_sha1);
+    // HQ audio is on by default. The patch also moves sound buffers in RAM
+    // and changes the game's RNG (see its README), so players who need the
+    // stock game (speedruns, RAM watchers) can turn it off.
+    bool hq = false;
+    if (m3settings::load(dir).hq_audio)
+        hq = mother3_apply_hq_audio_patch(rom, rom_size, source_sha1);
+    else
+        std::fprintf(stderr, "[mother3:hq-audio] off in the launcher settings; stock mixer\n");
+    g_mutable_code = code_mods || hq;
     return code_mods || hq;
 }
 

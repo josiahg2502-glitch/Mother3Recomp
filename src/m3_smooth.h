@@ -1,7 +1,7 @@
-// Smooth motion (120 fps): on a display of 100 Hz or more, every real frame is
-// preceded by an in-between one. It is the newest frame with each pixel moved
-// back by half of its layer's or sprite's motion since the previous frame,
-// drawn at twice the resolution so half-pixel steps show.
+// Smooth motion: on a display of 100 Hz or more, the engine presents once per
+// refresh (120, 144, 165, 240 Hz...). Each present is the newest frame with
+// each pixel moved back by the part of its layer's or sprite's motion still to
+// come at that moment, drawn at twice the resolution so half-pixel steps show.
 #pragma once
 
 namespace m3smooth {

@@ -30,17 +30,28 @@ import java.util.Locale;
  */
 public final class Mother3SetupActivity extends GbaSetupActivity {
     private static final int PICK_MOD = 2001;
+    private static final int PICK_SAVE = 2002;
     private static final long MAX_MOD_BYTES = 16L * 1024 * 1024;
+    private static final int SAVE_BYTES = 65536;  // 512 Kbit flash
     private static final String[] PROMPT_STYLES =
         {"Auto", "Xbox", "PlayStation", "Nintendo", "On-screen buttons"};
     private android.widget.LinearLayout modList;
+    private android.widget.Button raButton;
 
     @Override
     protected boolean supportsAutomaticLaunch() { return false; }
 
     @Override
+    protected void onCreate(android.os.Bundle savedInstanceState) {
+        // Before PLAY: the engine resumes only markers that name the battery save.
+        SuspendMarker.upgrade(getFilesDir(), org.gbarecomp.GbaGameConfig.load(this).romFile);
+        super.onCreate(savedInstanceState);
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
+        refreshRetroAchievementsButton();
         showNativeLogIfChanged();
     }
 
@@ -84,6 +95,14 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             setIniValue("Launcher", "m3_widescreen", checked ? "1" : "0"));
         preferences.addView(widescreen);
 
+        android.widget.Switch hqAudio = new android.widget.Switch(this);
+        hqAudio.setText("HQ audio (changes the game's RNG; off for speedruns)");
+        styleOption(hqAudio);
+        hqAudio.setChecked(!"0".equals(iniValue("Launcher", "m3_hq_audio")));
+        hqAudio.setOnCheckedChangeListener((view, checked) ->
+            setIniValue("Launcher", "m3_hq_audio", checked ? "1" : "0"));
+        preferences.addView(hqAudio);
+
         android.widget.Button prompts = new android.widget.Button(this);
         int style = 0;
         try { style = Integer.parseInt(iniValue("Launcher", "m3_button_prompts")); }
@@ -97,6 +116,12 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             setIniValue("Launcher", "m3_button_prompts", Integer.toString(current[0]));
         });
         preferences.addView(prompts);
+
+        raButton = new android.widget.Button(this);
+        raButton.setAllCaps(false);
+        raButton.setOnClickListener(view -> showRetroAchievementsDialog());
+        preferences.addView(raButton);
+        refreshRetroAchievementsButton();
 
         android.widget.TextView modsTitle = new android.widget.TextView(this);
         modsTitle.setText("Mods (IPS / BPS / UPS, applied in name order; long-press to remove)");
@@ -119,10 +144,113 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         });
         preferences.addView(addMod);
 
+        android.widget.Button importSave = new android.widget.Button(this);
+        importSave.setText("Import a save from another emulator (.sav / .srm)");
+        importSave.setAllCaps(false);
+        importSave.setOnClickListener(view -> {
+            android.content.Intent intent =
+                new android.content.Intent(android.content.Intent.ACTION_OPEN_DOCUMENT);
+            intent.addCategory(android.content.Intent.CATEGORY_OPENABLE);
+            intent.setType("*/*");
+            startActivityForResult(intent, PICK_SAVE);
+        });
+        preferences.addView(importSave);
+
         android.widget.Button button = new android.widget.Button(this);
         button.setText("Copy diagnostics");
         button.setOnClickListener(view -> copyDiagnostics());
         preferences.addView(button);
+    }
+
+    private void refreshRetroAchievementsButton() {
+        if (raButton == null) return;
+        String user = RaBridge.savedUser(getFilesDir());
+        raButton.setText(user != null ? "RetroAchievements: " + user : "RetroAchievements: log in");
+    }
+
+    /** Log in (the password is used once for a token) or out; achievements are softcore. */
+    private void showRetroAchievementsDialog() {
+        String user = RaBridge.savedUser(getFilesDir());
+        if (user != null) {
+            new AlertDialog.Builder(this)
+                .setTitle("RetroAchievements")
+                .setMessage("Logged in as " + user + ".\n\n"
+                    + "Achievements unlock in softcore mode: RetroAchievements "
+                    + "accepts hardcore unlocks only from approved emulators.")
+                .setPositiveButton("OK", null)
+                .setNegativeButton("Log out", (dialog, which) -> {
+                    RaBridge.logout(getFilesDir());
+                    refreshRetroAchievementsButton();
+                })
+                .show();
+            return;
+        }
+        int pad = Math.round(16 * getResources().getDisplayMetrics().density);
+        android.widget.LinearLayout form = new android.widget.LinearLayout(this);
+        form.setOrientation(android.widget.LinearLayout.VERTICAL);
+        form.setPadding(pad, pad / 2, pad, 0);
+        android.widget.EditText userField = new android.widget.EditText(this);
+        userField.setHint("Username");
+        userField.setSingleLine(true);
+        userField.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+            | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        android.widget.EditText passwordField = new android.widget.EditText(this);
+        passwordField.setHint("Password");
+        passwordField.setSingleLine(true);
+        passwordField.setInputType(android.text.InputType.TYPE_CLASS_TEXT
+            | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        android.widget.TextView status = new android.widget.TextView(this);
+        status.setText("Softcore mode. The password is used once to obtain a token and is not stored.");
+        form.addView(userField);
+        form.addView(passwordField);
+        form.addView(status);
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("RetroAchievements")
+            .setView(form)
+            .setPositiveButton("Log in", null)
+            .setNegativeButton("Cancel", null)
+            .create();
+        dialog.setOnShowListener(shown -> {
+            android.widget.Button login = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            login.setOnClickListener(view -> {
+                String name = userField.getText().toString().trim();
+                String password = passwordField.getText().toString();
+                if (name.isEmpty() || password.isEmpty()) {
+                    status.setText("Enter username and password.");
+                    return;
+                }
+                login.setEnabled(false);
+                status.setText("Logging in…");
+                new Thread(() -> {
+                    String error = null;
+                    String loggedIn = null;
+                    try {
+                        String[] credentials = RaBridge.login(name, password);
+                        RaBridge.saveCredentials(getFilesDir(), credentials[0], credentials[1]);
+                        loggedIn = credentials[0];
+                    } catch (IOException | RuntimeException failure) {
+                        error = failure.getMessage() != null ? failure.getMessage()
+                                                             : failure.getClass().getSimpleName();
+                    }
+                    final String message = error;
+                    final String account = loggedIn;
+                    runOnUiThread(() -> {
+                        if (isFinishing() || isDestroyed()) return;
+                        if (message == null) {
+                            dialog.dismiss();
+                            refreshRetroAchievementsButton();
+                            android.widget.Toast.makeText(this, "RetroAchievements: logged in as " + account,
+                                android.widget.Toast.LENGTH_SHORT).show();
+                        } else {
+                            status.setText(message);
+                            login.setEnabled(true);
+                        }
+                    });
+                }, "ra-login").start();
+            });
+        });
+        dialog.show();
     }
 
     private void styleOption(android.widget.CompoundButton option) {
@@ -210,6 +338,10 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
+        if (requestCode == PICK_SAVE) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) importSave(data.getData());
+            return;
+        }
         if (requestCode != PICK_MOD) {
             super.onActivityResult(requestCode, resultCode, data);
             return;
@@ -260,6 +392,87 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         List<String> on = enabledMods();
         if (!on.contains(name)) on.add(name);  // a newly added mod starts ticked
         saveEnabledMods(on);
+    }
+
+    /**
+     * Copies another emulator's battery save over the game's. Emulators pad
+     * flash saves (128 KB flash, RTC footers, VBA-Next's 136 KB .srm); the
+     * game's 64 KB always come first. The old save is kept as .sav.bak, and a
+     * suspended game no longer matches it, so the next start loads the import.
+     */
+    private void importSave(android.net.Uri uri) {
+        byte[] save = new byte[SAVE_BYTES];
+        long total = 0;
+        try (InputStream input = getContentResolver().openInputStream(uri)) {
+            if (input == null) throw new IOException("Android could not open that file.");
+            byte[] buffer = new byte[65536];
+            int read;
+            while ((read = input.read(buffer)) >= 0) {
+                if (total < SAVE_BYTES)
+                    System.arraycopy(buffer, 0, save, (int) total, (int) Math.min(read, SAVE_BYTES - total));
+                total += read;
+                if (total > 4L * SAVE_BYTES) break;
+            }
+        } catch (IOException error) {
+            showSaveError(error.getMessage());
+            return;
+        }
+        if (total < SAVE_BYTES || total > 4L * SAVE_BYTES) {
+            showSaveError("That file is not a MOTHER 3 save. Pick the .sav or .srm battery save from your "
+                + "emulator (64 KB or a little more). Save states can't be imported.");
+            return;
+        }
+        boolean blank = true;
+        for (byte b : save) if (b != save[0]) { blank = false; break; }
+        if (blank && (save[0] == 0 || save[0] == (byte) 0xFF)) {
+            showSaveError("That save file is empty.");
+            return;
+        }
+        String romFile = org.gbarecomp.GbaGameConfig.load(this).romFile;
+        String stem = romFile.contains(".") ? romFile.substring(0, romFile.lastIndexOf('.')) : romFile;
+        File target = new File(getFilesDir(), "roms/" + stem + ".sav");
+        Runnable write = () -> {
+            try {
+                File dir = target.getParentFile();
+                if (dir != null && !dir.isDirectory() && !dir.mkdirs())
+                    throw new IOException("Could not create the save folder.");
+                if (target.isFile())
+                    Files.copy(target.toPath(), new File(dir, target.getName() + ".bak").toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                File temporary = File.createTempFile("save-", ".tmp", dir);
+                try (FileOutputStream output = new FileOutputStream(temporary)) {
+                    output.write(save);
+                    output.getFD().sync();
+                } catch (IOException error) {
+                    temporary.delete();
+                    throw error;
+                }
+                Files.move(temporary.toPath(), target.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                android.widget.Toast.makeText(this, "Save imported. Choose Load on the title screen.",
+                    android.widget.Toast.LENGTH_LONG).show();
+            } catch (IOException error) {
+                showSaveError(error.getMessage());
+            }
+        };
+        if (!target.isFile()) {
+            write.run();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("Replace your save?")
+            .setMessage("This replaces your current MOTHER 3 save. The current one is kept as "
+                + target.getName() + ".bak.")
+            .setPositiveButton("Replace", (dialog, which) -> write.run())
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    private void showSaveError(String message) {
+        new AlertDialog.Builder(this)
+            .setTitle("Save not imported")
+            .setMessage(message)
+            .setPositiveButton("OK", null)
+            .show();
     }
 
     /** One value from config.ini, or "" when it is absent. */

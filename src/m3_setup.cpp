@@ -1,5 +1,6 @@
 #include "m3_setup.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -20,6 +21,8 @@ namespace m3setup {
 namespace {
 
 constexpr std::size_t kBiosSize = 16384, kRomSize = 32u << 20;
+constexpr std::size_t kSaveSize = 65536;  // 512 Kbit flash (game.toml [save])
+constexpr const char* kSavePath = "saves/mother3_en_v13.sav";
 constexpr const char* kEnglishSha1 = "306fb8874533b0fd0796208faa8bed2db4ae77fb";
 constexpr const char* kHqAudioSha1 = "4ffe71ce5c5e1e8d9be5fbd09968b60787169b21";
 constexpr const char* kJapanSha1 = "4f0f493e12c2a8c61b2d809af03f7abf87a85776";
@@ -146,8 +149,8 @@ bool load(const std::string& dir, Files* out) {
         write_line(dir + "/rom.cfg", f.rom_path);
         sha = sha1(f.rom);
     }
-    // An unpatched Japanese ROM plays as is; the launcher's English font isn't in it.
-    f.drawable = sha != kJapanSha1 && drawable(f.rom);
+    // An unpatched Japanese ROM plays as is; the launcher draws it with its bundled font.
+    f.drawable = drawable(f.rom);
     *out = std::move(f);
     return true;
 }
@@ -174,7 +177,6 @@ bool choose(const std::string& dir, Files* files, bool bios) {
         std::string sha = sha1(rom), boot = p;
         if (sha == kJapanSha1 &&
             ask("This is the original Japanese ROM. Play it untranslated, in Japanese? "
-                "(The MOTHER 3 launcher needs a translated ROM, so the game will start directly.) "
                 "Choose No to apply a translation patch, such as the English v1.3 patch, instead.")) {
             // Played as is.
         } else if (sha == kJapanSha1) {
@@ -197,7 +199,7 @@ bool choose(const std::string& dir, Files* files, bool bios) {
             continue;
         }
         next.rom_path = boot;
-        next.drawable = sha != kJapanSha1 && drawable(rom);
+        next.drawable = drawable(rom);
         next.rom = std::move(rom);
         break;
     }
@@ -208,6 +210,53 @@ bool choose(const std::string& dir, Files* files, bool bios) {
 #else
     (void)dir, (void)files, (void)bios;
     std::fprintf(stderr, "Pass --rom <MOTHER 3 ROM> and --bios <gba_bios.bin>.\n");
+    return false;
+#endif
+}
+
+bool import_save(const std::string& dir) {
+#if defined(GBAGAME_RECOMP_UI)
+    const std::string p = pick("Choose a MOTHER 3 save file", {"*.sav", "*.srm", "*.SAV", "*.SRM"},
+                               "Save file (.sav, .srm)");
+    if (p.empty()) return false;
+    std::vector<std::uint8_t> save = read(p);
+    // Emulators pad flash saves (128 KB flash, mGBA's RTC footer, VBA-Next's 136 KB .srm);
+    // the game's 64 KB always come first.
+    if (save.size() < kSaveSize || save.size() > 4 * kSaveSize) {
+        notice("That file is not a MOTHER 3 save. Pick the .sav or .srm battery save from your emulator "
+               "(64 KB or a little more). Save states can't be imported.");
+        return false;
+    }
+    save.resize(kSaveSize);
+    if (std::all_of(save.begin(), save.end(), [](std::uint8_t b) { return b == 0xFF; }) ||
+        std::all_of(save.begin(), save.end(), [](std::uint8_t b) { return b == 0x00; })) {
+        notice("That save file is empty.");
+        return false;
+    }
+    std::error_code ec;
+    const fs::path target = fs::path(dir) / kSavePath;
+    if (fs::equivalent(p, target, ec)) return false;
+    const bool replacing = fs::exists(target, ec);
+    if (replacing && !ask("This replaces your current MOTHER 3 save. "
+                          "The current one is kept as mother3_en_v13.sav.bak in the saves folder. Continue?"))
+        return false;
+    fs::create_directories(target.parent_path(), ec);
+    if (replacing) fs::copy_file(target, target.string() + ".bak", fs::copy_options::overwrite_existing, ec);
+    if (replacing && ec) {
+        notice("The current save could not be backed up, so nothing was changed. Check that the game folder is writable.");
+        return false;
+    }
+    std::FILE* f = std::fopen(target.string().c_str(), "wb");
+    bool ok = f && std::fwrite(save.data(), 1, save.size(), f) == save.size();
+    if (f && std::fclose(f) != 0) ok = false;
+    if (!ok) {
+        notice("The save could not be written. Check that the game folder is writable.");
+        return false;
+    }
+    notice("Save imported. Choose Load on the game's title screen to continue it.");
+    return true;
+#else
+    (void)dir;
     return false;
 #endif
 }

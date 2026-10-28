@@ -1,13 +1,13 @@
 {
   "gbarecomp": {
-    "url": "https://github.com/agray0425/gbarecomp.git",
-    "revision": "af47d28742a808291031d5af56f30f9f646366be",
+    "url": "https://github.com/mstan/gbarecomp.git",
+    "revision": "e353848ca8e82e7860469a235784a000102e7781",
     "patch": "patches/gbarecomp-runtime.patch",
-    "sha256": "28f6f8d8b3b6fe937c9e40e5341c254ab3a68939b593a08fddf3f8c49dcc1465",
+    "sha256": "a319ae953ad2ed1db0cdf2fe8374462d3f27b72abd6e1eb6c3c9ebf3c40453ba",
     "submodules": {
       "external/arm-recomp-core": {
         "url": "https://github.com/mstan/arm-recomp-core.git",
-        "revision": "1f13cdfd3b437a7a3919285f381987bd43f5234a"
+        "revision": "451580e6a6164477a03a93c1e3818eca96a0a015"
       },
       "platform/android/third_party/SDL": {
         "url": "https://github.com/mstan/SDL.git",
@@ -19,6 +19,10 @@
     "url": "https://github.com/mstan/recomp-ui.git",
     "revision": "41c88ffea852b970af8d50312620b17404e455ad",
     "patch": "patches/recomp-ui-runtime.patch",
-    "sha256": "671c2c049b5162a2fb63aa15359ad7dfadb028c1cb74f0e6d29a8fc78365718d"
+    "sha256": "001c6608a19486195ccced52b78e79c795192de6c8b8e595fec8548562534181"
+  },
+  "third_party/rcheevos": {
+    "url": "https://github.com/RetroAchievements/rcheevos.git",
+    "revision": "1433173220a7eaede6a9ed7a18e94117be1821e0"
   }
 }

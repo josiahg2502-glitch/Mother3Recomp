@@ -1,5 +1,6 @@
-// Decodes launcher art from the player's own MOTHER 3 (English v1.3) ROM:
-// overworld sprites, the main font and menu window tiles. Nothing is shipped.
+// Decodes launcher art from the player's own MOTHER 3 ROM: overworld sprites,
+// the main font and menu window tiles. Only a fallback font is shipped, for
+// ROMs without English v1.3's font (the Japanese ROM, translations built on it).
 #pragma once
 #include <cstdint>
 #include <vector>
@@ -41,6 +42,7 @@ private:
     std::vector<std::uint8_t> b_;
     std::vector<std::uint8_t> menu_tiles_;
     bool ok_ = false;
+    bool rom_font_ = true;
 };
 
 }  // namespace m3assets
