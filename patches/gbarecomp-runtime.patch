@@ -10415,3 +10415,73 @@ diff --git a/platform/android/java/org/gbarecomp/GbaSetupActivity.java b/platfor
              LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
          return page;
      }
+diff --git a/src/runtime/host_platform.h b/src/runtime/host_platform.h
+--- a/src/runtime/host_platform.h
++++ b/src/runtime/host_platform.h
+@@ -42,8 +42,11 @@ public:
+     // Block until the next frame's deadline. Call once per presented
+     // frame. No-op while uncapped.
+     void wait_for_next_frame();
+-    // Block until halfway to the next deadline (no deadline change): the slot
+-    // for an interpolated frame presented between two real ones.
++    // Interpolated frames: wait_in_between() holds the in-between frame until a
++    // fixed lead after the frame started (the slowest recent emulate+interpolate
++    // time), and wait_half_frame() holds the real frame half a period after it,
++    // so the two go out evenly spaced. Neither changes the deadline.
++    void wait_in_between();
+     void wait_half_frame();
+ 
+     // Realign the deadline to "now". Call after any non-real-time jump
+@@ -60,6 +63,7 @@ private:
+     void sleep_until_point(clock::time_point target);
+     std::chrono::nanoseconds period_{};
+     clock::time_point next_{};
++    std::chrono::nanoseconds lead_{};  // in-between frame's offset into the frame
+     bool uncapped_ = false;
+     bool raised_timer_res_ = false;
+     // HP-002: Windows high-resolution waitable timer (HANDLE, void* here to
+diff --git a/src/runtime/host_platform.cpp b/src/runtime/host_platform.cpp
+--- a/src/runtime/host_platform.cpp
++++ b/src/runtime/host_platform.cpp
+@@ -1,5 +1,6 @@
+ #include "host_platform.h"
+ 
++#include <algorithm>
+ #include <cstdio>
+ #include <thread>
+ 
+@@ -76,9 +77,22 @@ void FramePacer::wait_for_next_frame() {
+                                           : next_ + period_;
+ }
+ 
++void FramePacer::wait_in_between() {
++    if (uncapped_) return;
++    // Presenting the in-between frame as soon as it was ready left a short gap
++    // to the real one (6 of 16.7 ms), and on a 120 Hz display both landed in
++    // one refresh, so only 60 fps showed. The lead jumps up to a slow frame
++    // and eases back down 50 us per frame.
++    const clock::time_point start = next_ - period_;
++    const auto busy = std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now() - start);
++    lead_ = std::clamp(std::max(busy + std::chrono::milliseconds(1), lead_ - std::chrono::microseconds(50)),
++                       std::chrono::nanoseconds(0), period_ / 2 - std::chrono::microseconds(500));
++    sleep_until_point(start + lead_);
++}
++
+ void FramePacer::wait_half_frame() {
+     if (uncapped_) return;
+-    const clock::time_point target = next_ - period_ / 2;
++    const clock::time_point target = next_ - period_ / 2 + lead_;
+     if (clock::now() < target) sleep_until_point(target);
+ }
+ 
+diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
+--- a/src/runtime/runtime.cpp
++++ b/src/runtime/runtime.cpp
+@@ -3833,6 +3833,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+             interpolated_fb.resize(ppu.render_bytes() * 4u);
+             if (gba::g_present_interpolator(&ppu, live_fb.data(), ppu.render_width(),
+                                             ppu.render_height(), interpolated_fb.data())) {
++                pacer->wait_in_between();
+                 win.present_scaled(interpolated_fb.data(), 2);
+                 pacer->wait_half_frame();
+             }

@@ -1,6 +1,7 @@
 #include "m3_launcher.h"
 
 #include "m3_mods.h"
+#include "m3_setup.h"
 
 #include <SDL.h>
 
@@ -252,7 +253,7 @@ struct Pads {
 enum class Page { Main, Settings, Controls, Mods };
 const char* const kItems[] = {"Play", "Settings", "Controls", "Mods", "Quit"};
 constexpr int kItemCount = 5;
-constexpr int kSettingRows = 10;  // 9 options + Change game files
+constexpr int kSettingRows = 11;  // 9 options + Import a save + Change game files
 constexpr int kControlRows = m3settings::kButtonCount + 1;  // buttons + Reset
 
 // Smooth motion only shows on a display of 100 Hz or more (m3_smooth.cpp).
@@ -432,6 +433,8 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
                         leave_page();
                         result = Result::ChangeFiles;
                         running = false;
+                    } else if (in == Input::Confirm && row == kSettingRows - 2) {
+                        m3setup::import_save(dir);
                     } else if (in == Input::Right || in == Input::Confirm) change_setting(1);
                     if (in == Input::Back) leave_page();
                     break;
@@ -502,12 +505,13 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
                 st.sharp_filter ? "Sharp" : "Pixel", "", std::to_string(st.volume) + "%",
                 kPromptStyles[st.prompt_style], st.widescreen ? "On (16:9)" : "Off",
                 st.smooth == 2 ? "120 (always)" : !st.smooth ? "60"
-                : display_hz(win) >= 100 || display_hz(win) == 0 ? "120 (smooth)" : "120 (needs 120 Hz)", ""};
+                : display_hz(win) >= 100 || display_hz(win) == 0 ? "120 (smooth)" : "120 (needs 120 Hz)", "", ""};
             const char* labels[kSettingRows] = {"Window flavor", "Display", "Window size", "Scaling",
                                                 "Screen colors", "Volume", "Button prompts", "Widescreen",
-                                                "Frame rate", "Change game files (ROM, BIOS)"};
+                                                "Frame rate", "Import a save file (.sav, .srm)",
+                                                "Change game files (ROM, BIOS)"};
             for (int i = 0; i < kSettingRows; ++i) {
-                const int y = kPy + 8 + i * 11;
+                const int y = kPy + 6 + i * 10;
                 if (i == row) ui.cursor(kLabelX - 10, y + 4);
                 ui.text(labels[i], kLabelX, y);
                 std::string v = values[i];
