@@ -810,10 +810,19 @@ index 53ba221..73449b9 100644
          return static_cast<uint16_t>(host_keyinput_ & synth_keyinput_ & 0x03FFu);
      }
 diff --git a/src/gba/gba_ppu.cpp b/src/gba/gba_ppu.cpp
-index 0454527..5f9865d 100644
+index 0454527..731b0d4 100644
 --- a/src/gba/gba_ppu.cpp
 +++ b/src/gba/gba_ppu.cpp
-@@ -57,9 +57,23 @@ extern "C" int (*g_ws_obj_attr_y_provider)(int, std::uint16_t,
+@@ -33,6 +33,8 @@ extern "C" int g_ws_affine_filter_enabled = 0;
+ extern "C" int (*g_ws_affine_filter_provider)(int, int) = nullptr;
+ extern "C" int g_ws_authored_margin_layers = 0;
+ extern "C" int g_ws_native_view_left = -1;
++extern "C" int g_ws_native_view_top = -1;
++extern "C" void (*g_ws_frame_start)() = nullptr;
+ 
+ // Widescreen pillarbox (Step C policy): when nonzero, the wide path renders the
+ // margin columns (outside the central 240) as solid black instead of extended
+@@ -57,9 +59,23 @@ extern "C" int (*g_ws_obj_attr_y_provider)(int, std::uint16_t,
                                              std::uint16_t, std::uint16_t,
                                              int*) = nullptr;
  extern "C" const WsMarginObjPixel* (*g_ws_obj_margin_provider)(int, int*, int*) = nullptr;
@@ -837,7 +846,49 @@ index 0454527..5f9865d 100644
  // These pointers have no C linkage and are deliberately not declared by the
  // public PPU header. Only the engine-internal seam below can publish them.
  const std::uint16_t* g_foreign_background = nullptr;
-@@ -687,6 +701,7 @@ void render_scanline_internal(uint8_t* rgb,
+@@ -109,10 +125,10 @@ void GbaPpu::serialize(gbarecomp::debug::SnapshotWriter& w) const {
+         std::array<uint8_t, kFramebufferBytes> center{};
+         constexpr std::size_t kNativeStride = kScreenWidth * 3u;
+         const std::size_t wide_stride = render_width() * 3u;
+-        const std::size_t center_x = extra_left_ * 3u;
++        const std::size_t center_x = native_view_x() * 3u;
+         for (std::size_t y = 0; y < kScreenHeight; ++y) {
+             std::memcpy(center.data() + y * kNativeStride,
+-                        latched_fb_.data() + (y + extra_top_) * wide_stride + center_x,
++                        latched_fb_.data() + (y + native_view_y()) * wide_stride + center_x,
+                         kNativeStride);
+         }
+         w.bytes(center.data(), center.size());
+@@ -153,9 +169,9 @@ void GbaPpu::deserialize(gbarecomp::debug::SnapshotReader& r) {
+         // show the restored image instead of stale pre-load pixels.
+         constexpr std::size_t kNativeStride = kScreenWidth * 3u;
+         const std::size_t wide_stride = render_width() * 3u;
+-        const std::size_t center_x = extra_left_ * 3u;
++        const std::size_t center_x = native_view_x() * 3u;
+         for (std::size_t y = 0; y < kScreenHeight; ++y) {
+-            std::memcpy(work_fb_.data() + (y + extra_top_) * wide_stride + center_x,
++            std::memcpy(work_fb_.data() + (y + native_view_y()) * wide_stride + center_x,
+                         native_latch.data() + y * kNativeStride,
+                         kNativeStride);
+         }
+@@ -186,6 +202,16 @@ void GbaPpu::reset() {
+     std::memset(work_fb_.data(), 0xFF, work_fb_.size());
+ }
+ 
++uint32_t GbaPpu::native_view_x() const {
++    if (g_ws_native_view_left < 0) return extra_left_;
++    return std::min(static_cast<uint32_t>(g_ws_native_view_left), render_width() - kScreenWidth);
++}
++
++uint32_t GbaPpu::native_view_y() const {
++    if (g_ws_native_view_top < 0) return extra_top_;
++    return std::min(static_cast<uint32_t>(g_ws_native_view_top), render_height() - kScreenHeight);
++}
++
+ void GbaPpu::set_view_margins(uint32_t left, uint32_t right,
+                               uint32_t top, uint32_t bottom) {
+     // Geometry alone cannot authorize vertical content. The compositor also
+@@ -687,6 +713,7 @@ void render_scanline_internal(uint8_t* rgb,
      uint8_t* row = rgb + y * kScreenWidth * 3;
      if (dispcnt & 0x0080u) {
          std::memset(row, 0xFF, kScreenWidth * 3);
@@ -845,7 +896,7 @@ index 0454527..5f9865d 100644
          return;
      }
  
-@@ -1317,6 +1332,7 @@ void render_scanline_internal(uint8_t* rgb,
+@@ -1317,6 +1344,7 @@ void render_scanline_internal(uint8_t* rgb,
      if (bldy > 16u) bldy = 16u;
      for (uint32_t x = 0; x < kScreenWidth; ++x) {
          uint8_t* dst = row + x * 3;
@@ -853,7 +904,7 @@ index 0454527..5f9865d 100644
          // Alpha blend top (1st target) with the layer below (2nd target). Per
          // GBATEK this occurs when effect==1 OR top is a semi-transparent OBJ
          // (mode 1 forces alpha regardless of BLDCNT). NOT gated on EVA!=0:
-@@ -1376,9 +1392,9 @@ void render_scanline_wide(uint8_t* rgb, int y, uint16_t dispcnt,
+@@ -1376,9 +1404,9 @@ void render_scanline_wide(uint8_t* rgb, int y, uint16_t dispcnt,
      const bool native_row = y >= 0 && y < static_cast<int>(kVanH);
      uint8_t* row = rgb + (y + static_cast<int>(oy)) * out_w * 3;
      if (!native_row && (!g_ws_authored_margin_layers || !g_ws_tilemap_provider || g_ws_pillarbox)) {
@@ -865,7 +916,7 @@ index 0454527..5f9865d 100644
  
      struct PixelCandidate {
  #if !defined(GBARECOMP_SCANLINE_HLE)
-@@ -2075,6 +2091,7 @@ void render_scanline_wide(uint8_t* rgb, int y, uint16_t dispcnt,
+@@ -2075,6 +2103,7 @@ void render_scanline_wide(uint8_t* rgb, int y, uint16_t dispcnt,
              g_ws_ui_pixel_provider(static_cast<int>(x) - static_cast<int>(ox), y, &ui_color))
              submit(x, ui_color & 0x7FFFu, -1, 0, false, false);
          uint8_t* dst = row + x * 3;
@@ -873,7 +924,19 @@ index 0454527..5f9865d 100644
          // OBJ-only presentations (notably the real GBA BIOS logo) author the
          // whole backdrop through palette entry 0. There is no regular-BG
          // alias to protect in the margins, so preserve that authentic color
-@@ -2446,6 +2463,23 @@ void GbaPpu::render_scanline(uint32_t y,
+@@ -2142,8 +2171,9 @@ void GbaPpu::render(uint8_t* rgb,
+         return;
+     }
+     const uint32_t ow = render_width();
+-    for (int y = -static_cast<int>(extra_top_); y < static_cast<int>(kScreenHeight + extra_bottom_); ++y) {
+-        render_scanline_wide(rgb, y, dispcnt, io, vram, oam, pal, ow, extra_left_, extra_top_);
++    const int top = static_cast<int>(native_view_y());
++    for (int y = -top; y < static_cast<int>(render_height()) - top; ++y) {
++        render_scanline_wide(rgb, y, dispcnt, io, vram, oam, pal, ow, native_view_x(), top);
+     }
+ }
+ 
+@@ -2446,18 +2476,39 @@ void GbaPpu::render_scanline(uint32_t y,
      }
  
      if (!rasterization_enabled_) return;
@@ -897,7 +960,12 @@ index 0454527..5f9865d 100644
      // The enhanced surface consumes only published raster inputs. Its tile
      // stack and history never replace native pixels or advance device time.
      GbaHighResolutionFrame* hd = high_resolution_.get();
-@@ -2455,9 +2489,11 @@ void GbaPpu::render_scanline(uint32_t y,
+-    const bool hd_line = hd && hd->begin_line(int(y), extra_left_, extra_top_,
++    if (y == 0 && g_ws_frame_start && view_expanded()) g_ws_frame_start();
++    const uint32_t ox = view_expanded() ? native_view_x() : 0, oy = view_expanded() ? native_view_y() : 0;
++    const bool hd_line = hd && hd->begin_line(int(y), ox, oy,
+         dispcnt, affine_io.data(), vram, pal,
+         foreign_presentation_internal::background() ||
          foreign_presentation_internal::screen_overlay() ? nullptr : high_resolution_provider_,
          g_ws_affine_filter_enabled != 0);
      if (!view_expanded()) {
@@ -909,19 +977,48 @@ index 0454527..5f9865d 100644
          if (hd_line) {
              // The expanded compositor may apply optional presentation filters.
              // Keep its native scratch entirely separate from canonical pixels.
-@@ -2477,8 +2513,11 @@ void GbaPpu::render_scanline(uint32_t y,
-                 work_fb_.data() + size_t(sy + int(extra_top_)) * render_width() * 3);
-         }
+@@ -2466,21 +2517,28 @@ void GbaPpu::render_scanline(uint32_t y,
+         } else if (hd) hd->upscale_line(y, work_fb_.data() + y * render_width() * 3);
+         return;
      }
+-    // Host-authored extra rows use this frame's published state once, at
+-    // scanline zero. They never run emulated scanline timing or affine updates.
+-    if (y == 0 && (extra_top_ || extra_bottom_)) {
+-        for (int sy = -static_cast<int>(extra_top_); sy < static_cast<int>(kScreenHeight + extra_bottom_); ++sy) {
+-            if (sy >= 0 && sy < static_cast<int>(kScreenHeight)) continue;
++    // Host-authored extra rows use the published state of the native edge row
++    // they continue: rows above at scanline zero, rows below after the last
++    // scanline, so per-line scroll effects carry on past both edges. They never
++    // run emulated scanline timing or affine updates.
++    auto render_extra_rows = [&](int from, int to) {
++        for (int sy = from; sy < to; ++sy) {
+             render_scanline_wide(work_fb_.data(), sy, dispcnt, io, vram, oam, pal,
+-                                 render_width(), extra_left_, extra_top_);
+-            if (hd) hd->upscale_line(unsigned(sy + int(extra_top_)),
+-                work_fb_.data() + size_t(sy + int(extra_top_)) * render_width() * 3);
++                                 render_width(), ox, oy);
++            if (hd) hd->upscale_line(unsigned(sy + int(oy)),
++                work_fb_.data() + size_t(sy + int(oy)) * render_width() * 3);
+         }
+-    }
++    };
++    if (y == 0 && oy) render_extra_rows(-static_cast<int>(oy), 0);
 +    if (record)
-+        g_tag_row = work_tags_.data() + static_cast<std::size_t>(y + extra_top_) * render_width();
++        g_tag_row = work_tags_.data() + static_cast<std::size_t>(y + oy) * render_width();
      render_scanline_wide(work_fb_.data(), y, dispcnt, affine_io.data(),
-                          vram, oam, pal, render_width(), extra_left_, extra_top_, hd_line ? hd : nullptr);
+-                         vram, oam, pal, render_width(), extra_left_, extra_top_, hd_line ? hd : nullptr);
+-    if (hd && !hd_line) hd->upscale_line(y + extra_top_,
+-        work_fb_.data() + size_t(y + extra_top_) * render_width() * 3);
++                         vram, oam, pal, render_width(), ox, oy, hd_line ? hd : nullptr);
 +    g_tag_row = nullptr;
-     if (hd && !hd_line) hd->upscale_line(y + extra_top_,
-         work_fb_.data() + size_t(y + extra_top_) * render_width() * 3);
++    if (hd && !hd_line) hd->upscale_line(y + oy,
++        work_fb_.data() + size_t(y + oy) * render_width() * 3);
++    if (y == kScreenHeight - 1 && render_height() > kScreenHeight + oy)
++        render_extra_rows(static_cast<int>(kScreenHeight), static_cast<int>(render_height() - oy));
  }
-@@ -2510,6 +2549,12 @@ void GbaPpu::latch_framebuffer(uint16_t dispcnt,
+ 
+ void GbaPpu::note_affine_reference_write(unsigned bg, bool y_axis) {
+@@ -2510,6 +2568,12 @@ void GbaPpu::latch_framebuffer(uint16_t dispcnt,
  void GbaPpu::mark_framebuffer_latched() {
      if (rasterization_enabled_)
          std::memcpy(latched_fb_.data(), work_fb_.data(), render_bytes());
@@ -935,10 +1032,21 @@ index 0454527..5f9865d 100644
      if (high_resolution_) high_resolution_->latch();
      if (presentation_) presentation_->frame_ready();
 diff --git a/src/gba/gba_ppu.h b/src/gba/gba_ppu.h
-index 3563e70..e1c9c14 100644
+index 3563e70..984bcc5 100644
 --- a/src/gba/gba_ppu.h
 +++ b/src/gba/gba_ppu.h
-@@ -201,6 +201,21 @@ public:
+@@ -166,6 +166,10 @@ public:
+     // Active output dimensions = vanilla + active margins (== 240/160 when OFF).
+     uint32_t render_width()  const { return kScreenWidth  + extra_left_ + extra_right_; }
+     uint32_t render_height() const { return kScreenHeight + extra_top_ + extra_bottom_; }
++    // Where native (0, 0) sits in the expanded canvas: the left/top margins,
++    // or g_ws_native_view_left/top when a game places the native view itself.
++    uint32_t native_view_x() const;
++    uint32_t native_view_y() const;
+     std::size_t render_bytes() const {
+         return static_cast<std::size_t>(render_width()) * render_height() * 3;
+     }
+@@ -201,6 +205,21 @@ public:
      const uint8_t* latched_framebuffer() const { return latched_fb_.data(); }
      bool has_latched_framebuffer() const { return has_latched_fb_; }
  
@@ -960,7 +1068,7 @@ index 3563e70..e1c9c14 100644
  private:
      friend class SimulationStateCodec;
      std::unique_ptr<GbaHighResolutionFrame> high_resolution_;
-@@ -226,6 +241,9 @@ private:
+@@ -226,6 +245,9 @@ private:
      std::vector<uint8_t> work_fb_ = std::vector<uint8_t>(kMaxFramebufferBytes);
      std::vector<uint8_t> latched_fb_ = std::vector<uint8_t>(kMaxFramebufferBytes);
      bool has_latched_fb_ = false;
@@ -970,7 +1078,20 @@ index 3563e70..e1c9c14 100644
  
      struct AffineLineState {
          int32_t x = 0;
-@@ -317,6 +335,15 @@ extern "C" int (*g_ws_obj_attr_y_provider)(int oam_index,
+@@ -288,6 +310,12 @@ extern "C" int g_ws_authored_margin_layers;
+ // All BG, OBJ, window and authored-margin coordinates share this origin.
+ // The native renderer ignores it; it is never serialized as guest state.
+ extern "C" int g_ws_native_view_left;
++// The same for native Y=0, clamped to [0, render_height - 160]. Rows above
++// the native view render at scanline 0, rows below after its last line.
++extern "C" int g_ws_native_view_top;
++// Called as an expanded frame starts rendering (scanline 0), with the scroll
++// and VRAM state that frame shows: a game can place the native view here.
++extern "C" void (*g_ws_frame_start)();
+ extern "C" int g_ws_pillarbox;  // Step C policy: black margins on non-field screens
+ extern "C" int g_ws_pillarbox_left;
+ extern "C" int g_ws_pillarbox_right;
+@@ -317,6 +345,15 @@ extern "C" int (*g_ws_obj_attr_y_provider)(int oam_index,
  // keeps the established expanded-viewport OBJ test.
  extern "C" int g_ws_obj_native_clip;
  
@@ -2042,6 +2163,27 @@ index 0b3379e..709a451 100644
      auto* call = static_cast<StackedCall*>(arg);
      // Arm this thread's budget: keep kGuardMargin of headroom for the
      // runtime's own transient frames between two instruction-boundary
+diff --git a/src/runtime/multiplayer_view.cpp b/src/runtime/multiplayer_view.cpp
+index 266c987..010c5ae 100644
+--- a/src/runtime/multiplayer_view.cpp
++++ b/src/runtime/multiplayer_view.cpp
+@@ -63,7 +63,7 @@ namespace {
+     X(gba::g_ws_bg_x_provider_layers) X(gba::g_ws_bg_xy_provider) \
+     X(gba::g_ws_bg_xy_provider_layers) X(gba::g_ws_affine_filter_enabled) \
+     X(gba::g_ws_affine_filter_provider) X(gba::g_ws_authored_margin_layers) \
+-    X(gba::g_ws_native_view_left) \
++    X(gba::g_ws_native_view_left) X(gba::g_ws_native_view_top) X(gba::g_ws_frame_start) \
+     X(gba::g_ws_pillarbox) X(gba::g_ws_pillarbox_left) X(gba::g_ws_pillarbox_right) \
+     X(gba::g_ws_obj_x_provider) X(gba::g_ws_obj_attr_x_provider) X(gba::g_ws_obj_attr_y_provider) \
+     X(gba::g_ws_obj_native_clip) X(gba::g_ws_obj_margin_provider) \
+@@ -100,6 +100,7 @@ struct GbaNetplayPresentation::Impl {
+         GlobalScope scope(globals);
+         gba::g_ws_bg_x_provider_layers = gba::g_ws_bg_xy_provider_layers = 0xF;
+         gba::g_ws_native_view_left = -1;
++        gba::g_ws_native_view_top = -1;
+         gba::g_ws_affine_filter_enabled = filter;
+     }
+ };
 diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
 index 1eb5011..3506a0c 100644
 --- a/src/runtime/runtime.cpp
