@@ -11,8 +11,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
@@ -53,6 +55,15 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         super.onResume();
         refreshRetroAchievementsButton();
         showNativeLogIfChanged();
+    }
+
+    /** PLAY goes through here: keep a copy of the suspend state the game is about to resume. */
+    @Override
+    public void startActivity(android.content.Intent intent) {
+        if (intent.getComponent() != null
+                && gameActivityClass().getName().equals(intent.getComponent().getClassName()))
+            SuspendBackups.keep(getFilesDir(), org.gbarecomp.GbaGameConfig.load(this).romFile);
+        super.startActivity(intent);
     }
 
     private void showNativeLogIfChanged() {
@@ -156,10 +167,78 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         });
         preferences.addView(importSave);
 
+        android.widget.Button earlier = new android.widget.Button(this);
+        earlier.setText("Resume from an earlier point");
+        earlier.setAllCaps(false);
+        earlier.setOnClickListener(view -> showSuspendBackups());
+        preferences.addView(earlier);
+
         android.widget.Button button = new android.widget.Button(this);
         button.setText("Copy diagnostics");
         button.setOnClickListener(view -> copyDiagnostics());
         preferences.addView(button);
+    }
+
+    /** Lists the suspend-state backups and puts one back for the next PLAY. */
+    private void showSuspendBackups() {
+        if (org.libsdl.app.SdlSession.nativeRunning()) {
+            // It would write its own state over the restored one when it suspends.
+            android.widget.Toast.makeText(this, "The game is still closing. Try again in a moment.",
+                android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final String romFile = org.gbarecomp.GbaGameConfig.load(this).romFile;
+        File[] backups = SuspendBackups.list(getFilesDir(), romFile);
+        if (backups.length == 0) {
+            new AlertDialog.Builder(this)
+                .setTitle("Earlier points")
+                .setMessage("None yet. A copy of the suspended game is kept each time PLAY resumes it.")
+                .setPositiveButton("OK", null)
+                .show();
+            return;
+        }
+        String[] labels = new String[backups.length];
+        for (int i = 0; i < backups.length; ++i) labels[i] = backupLabel(backups[i]);
+        new AlertDialog.Builder(this)
+            .setTitle("Resume from an earlier point")
+            .setItems(labels, (dialog, which) -> confirmRestore(romFile, backups[which], labels[which]))
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    private void confirmRestore(String romFile, File backup, String label) {
+        new AlertDialog.Builder(this)
+            .setTitle("Resume from " + label + "?")
+            .setMessage("PLAY will pick up from this point. Where you are now is kept "
+                + "first, so you can come back to it from this list.")
+            .setPositiveButton("Restore", (dialog, which) -> {
+                try {
+                    SuspendBackups.restore(getFilesDir(), romFile, backup);
+                    android.widget.Toast.makeText(this, "Restored. PLAY picks up from " + label + ".",
+                        android.widget.Toast.LENGTH_LONG).show();
+                } catch (IOException e) {
+                    android.widget.Toast.makeText(this, "Restore failed: " + e.getMessage(),
+                        android.widget.Toast.LENGTH_LONG).show();
+                }
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    /** "25 Oct 2026, 19:45" from mother3_en_v13.20261025-194529.state. */
+    private static String backupLabel(File backup) {
+        String[] parts = backup.getName().split("\\.");
+        if (parts.length >= 3) {
+            try {
+                Date stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
+                    .parse(parts[parts.length - 2]);
+                if (stamp != null)
+                    return new SimpleDateFormat("d MMM yyyy, HH:mm", Locale.US).format(stamp);
+            } catch (java.text.ParseException ignored) {
+                // fall back to the file name
+            }
+        }
+        return backup.getName();
     }
 
     private void refreshRetroAchievementsButton() {
