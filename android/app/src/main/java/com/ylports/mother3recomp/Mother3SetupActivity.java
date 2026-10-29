@@ -103,6 +103,14 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             setIniValue("Launcher", "m3_hq_audio", checked ? "1" : "0"));
         preferences.addView(hqAudio);
 
+        android.widget.Switch rotate = new android.widget.Switch(this);
+        rotate.setText("Portrait too (turns with the phone; controls under the game)");
+        styleOption(rotate);
+        rotate.setChecked("1".equals(iniValue("Launcher", "m3_auto_rotate")));
+        rotate.setOnCheckedChangeListener((view, checked) ->
+            setIniValue("Launcher", "m3_auto_rotate", checked ? "1" : "0"));
+        preferences.addView(rotate);
+
         android.widget.Button prompts = new android.widget.Button(this);
         int style = 0;
         try { style = Integer.parseInt(iniValue("Launcher", "m3_button_prompts")); }

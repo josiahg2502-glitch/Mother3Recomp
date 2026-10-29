@@ -23,6 +23,7 @@ struct Settings {
     int prompt_style = 0;        // in-game buttons: 0 auto, 1 Xbox, 2 PlayStation, 3 Nintendo, 4 keyboard
     int smooth = 0;              // smooth motion: 0 off, 1 on 100 Hz+ displays, 2 always
     bool hq_audio = true;        // built-in HQ audio mixer on supported ROMs (changes RNG and RAM layout)
+    bool auto_rotate = false;    // Android: portrait too, following the phone's rotation
     std::array<std::string, kButtonCount> keys;  // SDL scancode names
 };
 

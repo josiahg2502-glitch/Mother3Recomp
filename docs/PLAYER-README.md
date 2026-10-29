@@ -27,6 +27,8 @@ SHA-1 values:
 - **Windows:** extract the ZIP and open `Mother3Recomp.exe`.
 - **Linux / Steam Deck:** extract the archive and open the included launcher. Ubuntu/Debian users need `libsdl2-2.0-0` and `libgl1`. Steam Deck users can add the launcher as a Non-Steam Game.
 - **Android:** install the APK, open the app and select your game files. Preserve app data when updating to keep saves.
+  Turn on **Portrait too** on the setup screen to play upright with the controls under the game (it follows the
+  phone's rotation lock). Fast-forward and save states are under **Assist Tools** in the in-game menu.
 
 Keep the executable with its bundled libraries and assets. Back up saves before changing builds or patches.
 
