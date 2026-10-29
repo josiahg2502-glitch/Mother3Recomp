@@ -58,3 +58,10 @@ apply from: new File(engineRoot, "platform/android/gbarecomp-app.gradle")
 
 android.sourceSets.main.manifest.srcFile file("src/main/AndroidManifest.xml")
 android.sourceSets.main.java.srcDir file("src/main/java")
+
+dependencies {
+    // Hoard serves cloud saves as tar.zst; zstd-jni ships the native decoders.
+    // 1.5.7-12 is the newest AAR that compiles against SDK 35: later ones
+    // declare minCompileSdk=37, which AGP 8.10 (compileSdk 35) refuses.
+    implementation "com.github.luben:zstd-jni:1.5.7-12@aar"
+}

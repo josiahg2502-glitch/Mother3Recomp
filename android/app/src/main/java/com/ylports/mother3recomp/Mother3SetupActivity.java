@@ -39,6 +39,8 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         {"Auto", "Xbox", "PlayStation", "Nintendo", "On-screen buttons"};
     private android.widget.LinearLayout modList;
     private android.widget.Button raButton;
+    private android.widget.Button cloudButton;
+    private com.ylports.mother3recomp.cloud.CloudSaves cloudSaves;
 
     @Override
     protected boolean supportsAutomaticLaunch() { return false; }
@@ -46,7 +48,10 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
     @Override
     protected void onCreate(android.os.Bundle savedInstanceState) {
         // Before PLAY: the engine resumes only markers that name the battery save.
-        SuspendMarker.upgrade(getFilesDir(), org.gbarecomp.GbaGameConfig.load(this).romFile);
+        org.gbarecomp.GbaGameConfig config = org.gbarecomp.GbaGameConfig.load(this);
+        SuspendMarker.upgrade(getFilesDir(), config.romFile);
+        cloudSaves = new com.ylports.mother3recomp.cloud.CloudSaves(this, config.romFile,
+            config.romSha1.length > 0 ? config.romSha1[0] : "", this::refreshCloudButton);
         super.onCreate(savedInstanceState);
     }
 
@@ -54,16 +59,32 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
     protected void onResume() {
         super.onResume();
         refreshRetroAchievementsButton();
+        refreshCloudButton();
         showNativeLogIfChanged();
+        // Only after a game started from PLAY (remembered across recreation).
+        cloudSaves.syncAfterPlay();
     }
 
-    /** PLAY goes through here: keep a copy of the suspend state the game is about to resume. */
+    /**
+     * PLAY goes through here: sync the save with the cloud first, then keep a
+     * copy of the suspend state the game is about to resume.
+     */
     @Override
     public void startActivity(android.content.Intent intent) {
-        if (intent.getComponent() != null
-                && gameActivityClass().getName().equals(intent.getComponent().getClassName()))
+        if (intent.getComponent() == null
+                || !gameActivityClass().getName().equals(intent.getComponent().getClassName())) {
+            super.startActivity(intent);
+            return;
+        }
+        cloudSaves.syncBeforePlay(() -> {
+            // A sync can outlive this screen; a newer one handles PLAY then.
+            if (isDestroyed()) return;
+            // After the sync: a download leaves the state on disk but no longer
+            // resumes it, and the game's next suspend overwrites it.
             SuspendBackups.keep(getFilesDir(), org.gbarecomp.GbaGameConfig.load(this).romFile);
-        super.startActivity(intent);
+            cloudSaves.gameStarting();
+            Mother3SetupActivity.super.startActivity(intent);
+        });
     }
 
     private void showNativeLogIfChanged() {
@@ -167,6 +188,12 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         });
         preferences.addView(importSave);
 
+        cloudButton = new android.widget.Button(this);
+        cloudButton.setAllCaps(false);
+        cloudButton.setOnClickListener(view -> cloudSaves.showSettings());
+        preferences.addView(cloudButton);
+        refreshCloudButton();
+
         android.widget.Button earlier = new android.widget.Button(this);
         earlier.setText("Resume from an earlier point");
         earlier.setAllCaps(false);
@@ -239,6 +266,10 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             }
         }
         return backup.getName();
+    }
+
+    private void refreshCloudButton() {
+        if (cloudButton != null) cloudButton.setText(cloudSaves.buttonLabel());
     }
 
     private void refreshRetroAchievementsButton() {
