@@ -40,7 +40,7 @@ ext.gbaGame = [
                      "The Spanish translation is supported.",
     variant        : variant,
     gameToml       : androidToml,
-    // The runtime menu's font (see SDL_main), with its licence.
+    // The launcher's font, also for the runtime menu (see SDL_main), with its licence.
     payloadDirs    : [[from: file("src/main/res/font"), into: "fonts"],
                       [from: file("src/main/res/raw"), into: "fonts"]],
     gameRoot       : gameRoot,

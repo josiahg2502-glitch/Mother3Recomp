@@ -26,7 +26,9 @@ SHA-1 values:
 
 - **Windows:** extract the ZIP and open `Mother3Recomp.exe`.
 - **Linux / Steam Deck:** extract the archive and open the included launcher. Ubuntu/Debian users need `libsdl2-2.0-0` and `libgl1`. Steam Deck users can add the launcher as a Non-Steam Game.
-- **Android:** install the APK, open the app and select your game files. Preserve app data when updating to keep saves.
+- **Android:** install the APK, open the app and select your game files. Then the home screen shows your file like the
+  game's file select, with **Continue** (or **Play**), **Saves**, **Achievements** and **Settings**; a gamepad works
+  throughout (START plays, B goes back). Preserve app data when updating to keep saves.
 
 Keep the executable with its bundled libraries and assets. Back up saves before changing builds or patches.
 
@@ -42,7 +44,7 @@ MOTHER 3's own launcher opens: the party walks around outside Tazmily while you 
   ROM or BIOS.
 - **Import a save file:** bring over a save from another emulator (mGBA, VBA, RetroArch, My Boy!, etc.). Pick its
   battery save (`.sav` or `.srm`, not a save state). Your current save is kept as `saves/mother3_en_v13.sav.bak`.
-  On Android, use **Import a save from another emulator** on the setup screen.
+  On Android, use **Saves → Import a save from another emulator**.
 - **Frame rate (smooth):** on a 100 Hz or faster screen (120, 144, 165, 240 Hz...), a frame is drawn for every
   refresh of the screen, each at its own moment between two of the game's frames, so scrolling and walking move
   in smaller steps. The launcher shows your screen's rate, such as **144 (smooth)**. The game itself still runs at
