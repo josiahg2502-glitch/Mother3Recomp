@@ -41,6 +41,7 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
     private android.widget.Button raButton;
     private android.widget.Button cloudButton;
     private com.ylports.mother3recomp.cloud.CloudSaves cloudSaves;
+    private android.widget.TextView saveWarning;
 
     @Override
     protected boolean supportsAutomaticLaunch() { return false; }
@@ -60,6 +61,7 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         super.onResume();
         refreshRetroAchievementsButton();
         refreshCloudButton();
+        refreshSaveWarning();
         showNativeLogIfChanged();
         // Only after a game started from PLAY (remembered across recreation).
         cloudSaves.syncAfterPlay();
@@ -119,6 +121,12 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
 
     @Override
     protected void addGameActions(android.widget.LinearLayout preferences) {
+        saveWarning = new android.widget.TextView(this);
+        saveWarning.setTextColor(android.graphics.Color.rgb(255, 211, 78));
+        saveWarning.setTextSize(13);
+        preferences.addView(saveWarning);
+        refreshSaveWarning();
+
         android.widget.Switch widescreen = new android.widget.Switch(this);
         widescreen.setText("Widescreen (16:9 field and battles)");
         styleOption(widescreen);
@@ -270,6 +278,35 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
 
     private void refreshCloudButton() {
         if (cloudButton != null) cloudButton.setText(cloudSaves.buttonLabel());
+    }
+
+    /**
+     * Warns when the suspended game is a day or more ahead of the in-game
+     * save (or there is no in-game save): that progress lives only in the
+     * suspend state, which the next suspend overwrites and a newer battery
+     * save stops from resuming.
+     */
+    private void refreshSaveWarning() {
+        if (saveWarning == null) return;
+        String romFile = org.gbarecomp.GbaGameConfig.load(this).romFile;
+        String stem = romFile.contains(".") ? romFile.substring(0, romFile.lastIndexOf('.')) : romFile;
+        File state = new File(getFilesDir(), "roms/" + stem + ".suspend.state");
+        File marker = new File(getFilesDir(), "roms/" + stem + ".suspend.pending");
+        File save = new File(getFilesDir(), "roms/" + stem + ".sav");
+        final long day = 24L * 60 * 60 * 1000;
+        String text = null;
+        if (state.isFile() && marker.isFile()) {
+            if (!save.isFile()) {
+                text = "No in-game save yet.";
+            } else if (state.lastModified() - save.lastModified() >= day) {
+                long days = (state.lastModified() - save.lastModified()) / day;
+                text = "Your in-game save is " + days + (days == 1 ? " day" : " days")
+                    + " older than the suspended game.";
+            }
+        }
+        if (text != null) text += " Save at a save point: progress since then lives only in the suspended game.";
+        saveWarning.setText(text != null ? text : "");
+        saveWarning.setVisibility(text != null ? android.view.View.VISIBLE : android.view.View.GONE);
     }
 
     private void refreshRetroAchievementsButton() {
