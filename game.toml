@@ -181,3 +181,10 @@ note = "actor box vs view rect overlap (widescreen culling)"
 addr = 0x08035820
 mode = "thumb"
 note = "actor box vs view rect overlap, looping maps (widescreen culling)"
+
+# Testing aid: M3_WARP=<map> takes this exit check (0 = exit taken) to warp
+# through the door transition; src/m3_devwarp.cpp. Disabled unless set.
+[[mod_function_hook]]
+addr = 0x0800F5EC
+mode = "thumb"
+note = "field exit check after a player step (dev warp)"

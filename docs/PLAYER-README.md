@@ -64,7 +64,7 @@ MOTHER 3's own launcher opens: the party walks around outside Tazmily while you 
   button) and tick them. Mods that change game code are marked *slower*: they run in compatibility mode.
 - **Widescreen:** Settings > Widescreen shows 16:9 in towns, fields, rooms and battles: the field draws the real
   map into the sides and battle backgrounds continue their pattern. Menus and anything else stay 4:3 with black
-  sides. At the edge of a map both sides go black by the same amount, so the picture stays centred, and screen wipes stay black outside. The bezel is not used in widescreen.
+  sides. At the edge of a map the view stops like the game's camera, a map narrower than the screen shows whole and centred, and screen wipes stay black outside. The bezel is not used in widescreen.
 - **Bezel (Windows):** built from your ROM on first launch in your window flavor; F10 hides it.
 
 ## Controls

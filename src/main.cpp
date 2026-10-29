@@ -17,6 +17,7 @@
 #include "m3_settings.h"
 #include "m3_setup.h"
 #include "m3_smooth.h"
+#include "m3_devwarp.h"
 #include "m3_widescreen.h"
 #if defined(MOTHER3_RETROACHIEVEMENTS)
 #include "retroachievements.h"
@@ -50,6 +51,7 @@ namespace {
 void (*g_next_vblank)() = nullptr;
 void mother3_vblank() {
     m3widescreen::tick();  // throttles itself; nothing to do at 240 px
+    m3devwarp::tick();
     if (g_next_vblank) g_next_vblank();
 }
 
