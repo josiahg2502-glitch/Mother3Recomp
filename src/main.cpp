@@ -260,7 +260,9 @@ int mother3_main(int argc, char** argv) {
     // Handhelds get the full-screen 320x180 view (see mother3_view_geometry).
     opts.max_view_width = 320;
     if (m3settings::load(".").widescreen) args.insert(args.begin() + 1, {"--view-width", "320"});
-    opts.orientation = gbarecomp::RunOptions::Orientation::Landscape;
+    // Portrait (controls under the game) is opt-in: it follows the phone's rotation lock.
+    opts.orientation = m3settings::load(".").auto_rotate ? gbarecomp::RunOptions::Orientation::Any
+                                                         : gbarecomp::RunOptions::Orientation::Landscape;
     opts.resume_suspend_state_on_launch = true;
     opts.ui_touch_friendly = true;
     // OpenSL ES stops its AudioTrack whenever the 2-block queue runs dry, which chops the
@@ -269,9 +271,9 @@ int mother3_main(int argc, char** argv) {
     opts.touch_pad_default = 1;
     // A pixel font (SIL OFL) for the runtime menu, read from the APK's assets.
     opts.runtime_ui_font = "payload/fonts/pixelify_sans.ttf";
-    // shortcut: rewind/fast-forward stay desktop-only until rewind memory is measured on phones.
-    opts.expose_assist_tools = false;
-    opts.assist_tools_enabled_by_default = false;
+    // Fast-forward and save states as on desktop (the runtime menu's Assist Tools).
+    // shortcut: rewind stays desktop-only until its memory is measured on phones.
+    opts.rewind_history_seconds = 0;
 #if defined(MOTHER3_RETROACHIEVEMENTS)
     // No-op unless the setup screen stored RetroAchievements credentials.
     mother3::ra_install(opts, MOTHER3_ROM_FILE);

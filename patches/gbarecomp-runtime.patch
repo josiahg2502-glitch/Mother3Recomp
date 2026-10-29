@@ -71,10 +71,18 @@ index 0201eeb..2133a50 100644
          debug {
              manifest.srcFile new File(platformRoot, "debug/AndroidManifest.xml")
 diff --git a/platform/android/java/org/gbarecomp/GbaGameActivity.java b/platform/android/java/org/gbarecomp/GbaGameActivity.java
-index 6e36782..d515b18 100644
+index 6e36782..bb2b4f6 100644
 --- a/platform/android/java/org/gbarecomp/GbaGameActivity.java
 +++ b/platform/android/java/org/gbarecomp/GbaGameActivity.java
-@@ -29,6 +29,9 @@ import java.nio.charset.StandardCharsets;
+@@ -6,6 +6,7 @@ import android.graphics.Insets;
+ import android.os.Build;
+ import android.os.Bundle;
+ import android.util.DisplayMetrics;
++import android.view.Display;
+ import android.view.DisplayCutout;
+ import android.view.View;
+ import android.view.WindowInsets;
+@@ -29,6 +30,9 @@ import java.nio.charset.StandardCharsets;
   * runtime so host chrome avoids cutouts and system-gesture edges.
   */
  public class GbaGameActivity extends SDLActivity {
@@ -84,7 +92,7 @@ index 6e36782..d515b18 100644
      private GbaGameConfig config;
      private boolean nativeReady;
  
-@@ -41,6 +44,7 @@ public class GbaGameActivity extends SDLActivity {
+@@ -41,6 +45,7 @@ public class GbaGameActivity extends SDLActivity {
          } catch (IOException error) {
              throw new IllegalStateException("Unable to install game payload", error);
          }
@@ -92,7 +100,43 @@ index 6e36782..d515b18 100644
          super.onCreate(savedInstanceState);
          if (Build.VERSION.SDK_INT >= 28) {
              WindowManager.LayoutParams attributes = getWindow().getAttributes();
-@@ -119,25 +123,74 @@ public class GbaGameActivity extends SDLActivity {
+@@ -49,6 +54,7 @@ public class GbaGameActivity extends SDLActivity {
+                 : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+             getWindow().setAttributes(attributes);
+         }
++        preferSixtyHertz();
+         View decor = getWindow().getDecorView();
+         decor.setOnApplyWindowInsetsListener((view, insets) -> {
+             reportInsets(insets);
+@@ -68,6 +74,27 @@ public class GbaGameActivity extends SDLActivity {
+         }
+     }
+ 
++    /**
++     * The GBA draws 59.73 frames a second. A 90 or 144 Hz panel shows them for
++     * uneven numbers of refreshes (visible judder), so ask for the display's
++     * 60 Hz mode at the current resolution when it has one.
++     */
++    private void preferSixtyHertz() {
++        if (Build.VERSION.SDK_INT < 23) return;
++        Display display = getWindowManager().getDefaultDisplay();
++        Display.Mode current = display.getMode();
++        for (Display.Mode mode : display.getSupportedModes()) {
++            if (mode.getPhysicalWidth() == current.getPhysicalWidth() &&
++                mode.getPhysicalHeight() == current.getPhysicalHeight() &&
++                Math.abs(mode.getRefreshRate() - 60f) < 1f) {
++                WindowManager.LayoutParams attributes = getWindow().getAttributes();
++                attributes.preferredDisplayModeId = mode.getModeId();
++                getWindow().setAttributes(attributes);
++                return;
++            }
++        }
++    }
++
+     static int orientationFor(String policy) {
+         if ("any".equals(policy)) return ActivityInfo.SCREEN_ORIENTATION_FULL_USER;
+         if ("landscape-locked".equals(policy)) return ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+@@ -119,25 +146,74 @@ public class GbaGameActivity extends SDLActivity {
      }
  
      protected void enterImmersiveMode() {
