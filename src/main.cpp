@@ -272,6 +272,10 @@ int mother3_main(int argc, char** argv) {
     // shortcut: rewind/fast-forward stay desktop-only until rewind memory is measured on phones.
     opts.expose_assist_tools = false;
     opts.assist_tools_enabled_by_default = false;
+    // Replay capture fingerprints the machine state every frame and checkpoints
+    // it periodically: about 0.4 points of late frames on an Anbernic RG556.
+    // config.ini [Diagnostics] replay_capture = 1 turns it back on to record a bug.
+    opts.diagnostic_replay_default = false;
 #if defined(MOTHER3_RETROACHIEVEMENTS)
     // No-op unless the setup screen stored RetroAchievements credentials.
     mother3::ra_install(opts, MOTHER3_ROM_FILE);
