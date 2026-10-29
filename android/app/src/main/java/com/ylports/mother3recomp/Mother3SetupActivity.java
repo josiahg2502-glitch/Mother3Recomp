@@ -11,8 +11,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
@@ -37,6 +39,12 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         {"Auto", "Xbox", "PlayStation", "Nintendo", "On-screen buttons"};
     private android.widget.LinearLayout modList;
     private android.widget.Button raButton;
+    private android.widget.Button audioButton;
+    private static final String[] AUDIO_MODES = {"HQ", "Enhanced", "Original"};
+    private static final String[] AUDIO_DETAILS = {
+        "HQ: the game's mixer patched to high quality. Changes the game's random numbers (off for speedruns).",
+        "Enhanced: a high-precision mix of the original music, without the 8-bit hiss. Keeps the stock game.",
+        "Original: the GBA's sound as it was."};
 
     @Override
     protected boolean supportsAutomaticLaunch() { return false; }
@@ -53,6 +61,15 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         super.onResume();
         refreshRetroAchievementsButton();
         showNativeLogIfChanged();
+    }
+
+    /** PLAY goes through here: keep a copy of the suspend state the game is about to resume. */
+    @Override
+    public void startActivity(android.content.Intent intent) {
+        if (intent.getComponent() != null
+                && gameActivityClass().getName().equals(intent.getComponent().getClassName()))
+            SuspendBackups.keep(getFilesDir(), org.gbarecomp.GbaGameConfig.load(this).romFile);
+        super.startActivity(intent);
     }
 
     private void showNativeLogIfChanged() {
@@ -95,13 +112,11 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             setIniValue("Launcher", "m3_widescreen", checked ? "1" : "0"));
         preferences.addView(widescreen);
 
-        android.widget.Switch hqAudio = new android.widget.Switch(this);
-        hqAudio.setText("HQ audio (changes the game's RNG; off for speedruns)");
-        styleOption(hqAudio);
-        hqAudio.setChecked(!"0".equals(iniValue("Launcher", "m3_hq_audio")));
-        hqAudio.setOnCheckedChangeListener((view, checked) ->
-            setIniValue("Launcher", "m3_hq_audio", checked ? "1" : "0"));
-        preferences.addView(hqAudio);
+        audioButton = new android.widget.Button(this);
+        audioButton.setAllCaps(false);
+        audioButton.setOnClickListener(view -> showAudioChoice());
+        preferences.addView(audioButton);
+        refreshAudioButton();
 
         android.widget.Button prompts = new android.widget.Button(this);
         int style = 0;
@@ -156,10 +171,134 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         });
         preferences.addView(importSave);
 
+        android.widget.Button earlier = new android.widget.Button(this);
+        earlier.setText("Resume from an earlier point");
+        earlier.setAllCaps(false);
+        earlier.setOnClickListener(view -> showSuspendBackups());
+        preferences.addView(earlier);
+
         android.widget.Button button = new android.widget.Button(this);
         button.setText("Copy diagnostics");
         button.setOnClickListener(view -> copyDiagnostics());
         preferences.addView(button);
+    }
+
+    /**
+     * 0 = HQ (the game's mixer patched into the ROM, [Launcher] m3_hq_audio,
+     * on unless set to 0), 1 = Enhanced (the engine's MP2K shadow mixer,
+     * [Audio] enhanced), 2 = Original. Never both: the shadow mixer models
+     * the stock driver, and HQ moves its buffers.
+     */
+    private int audioMode() {
+        if (!"0".equals(iniValue("Launcher", "m3_hq_audio"))) return 0;
+        return "1".equals(iniValue("Audio", "enhanced")) ? 1 : 2;
+    }
+
+    private void refreshAudioButton() {
+        if (audioButton != null) audioButton.setText("Audio: " + AUDIO_MODES[audioMode()]);
+    }
+
+    private void showAudioChoice() {
+        final int current = audioMode();
+        new AlertDialog.Builder(this)
+            .setTitle("Audio")
+            .setSingleChoiceItems(AUDIO_DETAILS, current, (dialog, choice) -> {
+                dialog.dismiss();
+                if (choice != current) chooseAudio(current, choice);
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    private void chooseAudio(int current, int choice) {
+        Runnable apply = () -> {
+            setIniValue("Launcher", "m3_hq_audio", choice == 0 ? "1" : "0");
+            setIniValue("Audio", "enhanced", choice == 1 ? "1" : "0");
+            refreshAudioButton();
+        };
+        // HQ patches the ROM image, so a suspended game made with it on cannot
+        // resume with it off, and the other way round.
+        String romFile = org.gbarecomp.GbaGameConfig.load(this).romFile;
+        String stem = romFile.contains(".") ? romFile.substring(0, romFile.lastIndexOf('.')) : romFile;
+        boolean suspended = new File(getFilesDir(), "roms/" + stem + ".suspend.pending").isFile();
+        if ((current == 0) == (choice == 0) || !suspended) {
+            apply.run();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle(choice == 0 ? "Turn HQ audio on?" : "Turn HQ audio off?")
+            .setMessage("HQ audio changes the game image, so the suspended game can't continue "
+                + "after this switch: the game starts from your in-game save. A copy of the "
+                + "suspended game is kept; switch back and use \"Resume from an earlier point\" "
+                + "to continue from there.")
+            .setPositiveButton("Switch", (dialog, which) -> {
+                SuspendBackups.keep(getFilesDir(), romFile);
+                apply.run();
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    /** Lists the suspend-state backups and puts one back for the next PLAY. */
+    private void showSuspendBackups() {
+        if (org.libsdl.app.SdlSession.nativeRunning()) {
+            // It would write its own state over the restored one when it suspends.
+            android.widget.Toast.makeText(this, "The game is still closing. Try again in a moment.",
+                android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        final String romFile = org.gbarecomp.GbaGameConfig.load(this).romFile;
+        File[] backups = SuspendBackups.list(getFilesDir(), romFile);
+        if (backups.length == 0) {
+            new AlertDialog.Builder(this)
+                .setTitle("Earlier points")
+                .setMessage("None yet. A copy of the suspended game is kept each time PLAY resumes it.")
+                .setPositiveButton("OK", null)
+                .show();
+            return;
+        }
+        String[] labels = new String[backups.length];
+        for (int i = 0; i < backups.length; ++i) labels[i] = backupLabel(backups[i]);
+        new AlertDialog.Builder(this)
+            .setTitle("Resume from an earlier point")
+            .setItems(labels, (dialog, which) -> confirmRestore(romFile, backups[which], labels[which]))
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    private void confirmRestore(String romFile, File backup, String label) {
+        new AlertDialog.Builder(this)
+            .setTitle("Resume from " + label + "?")
+            .setMessage("PLAY will pick up from this point. Where you are now is kept "
+                + "first, so you can come back to it from this list.")
+            .setPositiveButton("Restore", (dialog, which) -> {
+                try {
+                    SuspendBackups.restore(getFilesDir(), romFile, backup);
+                    android.widget.Toast.makeText(this, "Restored. PLAY picks up from " + label + ".",
+                        android.widget.Toast.LENGTH_LONG).show();
+                } catch (IOException e) {
+                    android.widget.Toast.makeText(this, "Restore failed: " + e.getMessage(),
+                        android.widget.Toast.LENGTH_LONG).show();
+                }
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    /** "25 Oct 2026, 19:45" from mother3_en_v13.20261025-194529.state. */
+    private static String backupLabel(File backup) {
+        String[] parts = backup.getName().split("\\.");
+        if (parts.length >= 3) {
+            try {
+                Date stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
+                    .parse(parts[parts.length - 2]);
+                if (stamp != null)
+                    return new SimpleDateFormat("d MMM yyyy, HH:mm", Locale.US).format(stamp);
+            } catch (java.text.ParseException ignored) {
+                // fall back to the file name
+            }
+        }
+        return backup.getName();
     }
 
     private void refreshRetroAchievementsButton() {
