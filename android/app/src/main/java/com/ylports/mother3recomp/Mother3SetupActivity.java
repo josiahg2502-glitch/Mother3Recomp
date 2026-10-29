@@ -39,6 +39,12 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         {"Auto", "Xbox", "PlayStation", "Nintendo", "On-screen buttons"};
     private android.widget.LinearLayout modList;
     private android.widget.Button raButton;
+    private android.widget.Button audioButton;
+    private static final String[] AUDIO_MODES = {"HQ", "Enhanced", "Original"};
+    private static final String[] AUDIO_DETAILS = {
+        "HQ: the game's mixer patched to high quality. Changes the game's random numbers (off for speedruns).",
+        "Enhanced: a high-precision mix of the original music, without the 8-bit hiss. Keeps the stock game.",
+        "Original: the GBA's sound as it was."};
 
     @Override
     protected boolean supportsAutomaticLaunch() { return false; }
@@ -106,13 +112,11 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             setIniValue("Launcher", "m3_widescreen", checked ? "1" : "0"));
         preferences.addView(widescreen);
 
-        android.widget.Switch hqAudio = new android.widget.Switch(this);
-        hqAudio.setText("HQ audio (changes the game's RNG; off for speedruns)");
-        styleOption(hqAudio);
-        hqAudio.setChecked(!"0".equals(iniValue("Launcher", "m3_hq_audio")));
-        hqAudio.setOnCheckedChangeListener((view, checked) ->
-            setIniValue("Launcher", "m3_hq_audio", checked ? "1" : "0"));
-        preferences.addView(hqAudio);
+        audioButton = new android.widget.Button(this);
+        audioButton.setAllCaps(false);
+        audioButton.setOnClickListener(view -> showAudioChoice());
+        preferences.addView(audioButton);
+        refreshAudioButton();
 
         android.widget.Button prompts = new android.widget.Button(this);
         int style = 0;
@@ -177,6 +181,62 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         button.setText("Copy diagnostics");
         button.setOnClickListener(view -> copyDiagnostics());
         preferences.addView(button);
+    }
+
+    /**
+     * 0 = HQ (the game's mixer patched into the ROM, [Launcher] m3_hq_audio,
+     * on unless set to 0), 1 = Enhanced (the engine's MP2K shadow mixer,
+     * [Audio] enhanced), 2 = Original. Never both: the shadow mixer models
+     * the stock driver, and HQ moves its buffers.
+     */
+    private int audioMode() {
+        if (!"0".equals(iniValue("Launcher", "m3_hq_audio"))) return 0;
+        return "1".equals(iniValue("Audio", "enhanced")) ? 1 : 2;
+    }
+
+    private void refreshAudioButton() {
+        if (audioButton != null) audioButton.setText("Audio: " + AUDIO_MODES[audioMode()]);
+    }
+
+    private void showAudioChoice() {
+        final int current = audioMode();
+        new AlertDialog.Builder(this)
+            .setTitle("Audio")
+            .setSingleChoiceItems(AUDIO_DETAILS, current, (dialog, choice) -> {
+                dialog.dismiss();
+                if (choice != current) chooseAudio(current, choice);
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
+    }
+
+    private void chooseAudio(int current, int choice) {
+        Runnable apply = () -> {
+            setIniValue("Launcher", "m3_hq_audio", choice == 0 ? "1" : "0");
+            setIniValue("Audio", "enhanced", choice == 1 ? "1" : "0");
+            refreshAudioButton();
+        };
+        // HQ patches the ROM image, so a suspended game made with it on cannot
+        // resume with it off, and the other way round.
+        String romFile = org.gbarecomp.GbaGameConfig.load(this).romFile;
+        String stem = romFile.contains(".") ? romFile.substring(0, romFile.lastIndexOf('.')) : romFile;
+        boolean suspended = new File(getFilesDir(), "roms/" + stem + ".suspend.pending").isFile();
+        if ((current == 0) == (choice == 0) || !suspended) {
+            apply.run();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle(choice == 0 ? "Turn HQ audio on?" : "Turn HQ audio off?")
+            .setMessage("HQ audio changes the game image, so the suspended game can't continue "
+                + "after this switch: the game starts from your in-game save. A copy of the "
+                + "suspended game is kept; switch back and use \"Resume from an earlier point\" "
+                + "to continue from there.")
+            .setPositiveButton("Switch", (dialog, which) -> {
+                SuspendBackups.keep(getFilesDir(), romFile);
+                apply.run();
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
     }
 
     /** Lists the suspend-state backups and puts one back for the next PLAY. */
