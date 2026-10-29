@@ -95,6 +95,15 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             setIniValue("Launcher", "m3_widescreen", checked ? "1" : "0"));
         preferences.addView(widescreen);
 
+        // The engine reads config.ini [Display] integer_scale when the game starts.
+        android.widget.Switch integerScale = new android.widget.Switch(this);
+        integerScale.setText("Integer scaling (sharpest pixels, thin borders)");
+        styleOption(integerScale);
+        integerScale.setChecked("1".equals(iniValue("Display", "integer_scale")));
+        integerScale.setOnCheckedChangeListener((view, checked) ->
+            setIniValue("Display", "integer_scale", checked ? "1" : "0"));
+        preferences.addView(integerScale);
+
         android.widget.Switch hqAudio = new android.widget.Switch(this);
         hqAudio.setText("HQ audio (changes the game's RNG; off for speedruns)");
         styleOption(hqAudio);
