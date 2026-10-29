@@ -1,0 +1,43 @@
+name: m3r-cloudtest
+services:
+  romm-db:
+    image: mariadb:11
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpw
+      MARIADB_DATABASE: romm
+      MARIADB_USER: romm-user
+      MARIADB_PASSWORD: rommpw
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      start_period: 30s
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  romm:
+    image: rommapp/romm:5.4.0
+    environment:
+      DB_HOST: romm-db
+      DB_NAME: romm
+      DB_USER: romm-user
+      DB_PASSWD: rommpw
+      ROMM_AUTH_SECRET_KEY: ${ROMM_AUTH_SECRET_KEY}
+      HASHEOUS_API_ENABLED: "false"
+    volumes:
+      - ./romm/library:/romm/library
+      - ./romm/assets:/romm/assets
+      - ./romm/config:/romm/config
+    ports:
+      - "18080:8080"
+    depends_on:
+      romm-db:
+        condition: service_healthy
+  hoard:
+    image: ghcr.io/rleeon/hoard:1.2.2
+    environment:
+      HOARD__LOGGING__FORMAT: pretty
+      HOARD_ADMIN_USERNAME: tester
+      HOARD_ADMIN_PASSWORD: hoard-test-pw-123
+    volumes:
+      - ./hoard-config:/etc/hoard
+    ports:
+      - "12421:12421"

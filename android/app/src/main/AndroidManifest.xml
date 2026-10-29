@@ -6,7 +6,8 @@
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <!-- RetroAchievements login and unlocks (HTTPS). -->
+    <!-- RetroAchievements (HTTPS) and cloud saves (RomM / Hoard; self-hosted
+         servers on a home network are often plain http, hence cleartext). -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
@@ -16,7 +17,8 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher"
         android:resizeableActivity="true"
-        android:theme="@style/GbaTheme">
+        android:theme="@style/GbaTheme"
+        android:usesCleartextTraffic="true">
         <meta-data android:name="gbarecomp.title" android:value="${gbaTitle}" />
         <meta-data android:name="gbarecomp.rom_label" android:value="${gbaRomLabel}" />
         <meta-data android:name="gbarecomp.rom_sha1" android:value="${gbaRomSha1}" />

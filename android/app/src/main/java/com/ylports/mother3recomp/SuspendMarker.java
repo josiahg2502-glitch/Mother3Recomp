@@ -35,19 +35,30 @@ final class SuspendMarker {
         try {
             String[] fields = new String(readAll(marker), StandardCharsets.US_ASCII).trim().split("\\s+");
             if (fields.length != 1 || fields[0].isEmpty()) return;  // already fingerprinted
-            File save = new File(filesDir, "roms/" + stem + ".sav");
-            String battery = save.isFile() ? sha1(readAll(save)) : "missing";
-            File temp = new File(marker.getPath() + ".tmp");
-            try (FileOutputStream out = new FileOutputStream(temp)) {
-                out.write((fields[0] + "\n" + battery + "\n").getBytes(StandardCharsets.US_ASCII));
-                out.getFD().sync();
-            }
-            if (!temp.renameTo(marker)) {
-                temp.delete();
-                throw new IOException("cannot write " + marker);
-            }
-        } catch (IOException | NoSuchAlgorithmException e) {
+            write(filesDir, stem, fields[0]);
+        } catch (IOException e) {
             Log.w(TAG, "cannot upgrade " + marker.getName(), e);
+        }
+    }
+
+    /** Writes the marker that resumes the suspend state at {@code frame} with the battery save as it is now. */
+    static void write(File filesDir, String stem, String frame) throws IOException {
+        File marker = new File(filesDir, "roms/" + stem + ".suspend.pending");
+        File save = new File(filesDir, "roms/" + stem + ".sav");
+        String battery;
+        try {
+            battery = save.isFile() ? sha1(readAll(save)) : "missing";
+        } catch (NoSuchAlgorithmException e) {
+            throw new IOException(e);
+        }
+        File temp = new File(marker.getPath() + ".tmp");
+        try (FileOutputStream out = new FileOutputStream(temp)) {
+            out.write((frame + "\n" + battery + "\n").getBytes(StandardCharsets.US_ASCII));
+            out.getFD().sync();
+        }
+        if (!temp.renameTo(marker)) {
+            temp.delete();
+            throw new IOException("cannot write " + marker);
         }
     }
 
