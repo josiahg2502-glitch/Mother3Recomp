@@ -3062,3 +3062,207 @@ diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
                if (gba::GbaBus* b = gbarecomp::active_bus())
                    b->audio().shadow_driver_tick(pc, thumb != 0);
            }
+diff --git a/platform/android/java/org/gbarecomp/GbaSetupActivity.java b/platform/android/java/org/gbarecomp/GbaSetupActivity.java
+index b05a748..81a8123 100644
+--- a/platform/android/java/org/gbarecomp/GbaSetupActivity.java
++++ b/platform/android/java/org/gbarecomp/GbaSetupActivity.java
+@@ -66,9 +66,64 @@ public class GbaSetupActivity extends Activity {
+     private CheckBox skipLauncherCheck;
+     private boolean biosReady;
+     private boolean romReady;
++    private boolean showingSetup;  // the game asked for the setup screen while ready
+ 
+     protected void addGameActions(LinearLayout preferences) {}
+     protected boolean supportsAutomaticLaunch() { return true; }
++    /** false leaves the display and touch options to the game's own screens. */
++    protected boolean setupShowsOptions() { return true; }
++
++    /**
++     * A game's own home screen, shown instead of the setup screen once the
++     * ROM (and a required BIOS) are in place; null keeps the setup screen.
++     * Built again after configuration changes and after the files change.
++     */
++    protected View buildHomeContent() { return null; }
++
++    /** The setup screen (file cards), also when the game is ready. */
++    protected final void showSetupScreen() {
++        showingSetup = true;
++        setContentView(buildContent());
++        refreshStatus();
++    }
++
++    /** The game's home screen, when it has one and the files are ready. */
++    protected final void showHomeScreen() {
++        showingSetup = false;
++        showHomeIfReady();
++    }
++
++    protected final boolean isSetupScreenShown() { return showingSetup; }
++    protected final boolean filesReady() { return ready(); }
++    protected final boolean romInstalled() { return romReady; }
++    protected final boolean biosInstalled() { return biosReady; }
++    protected final void play() { launchGame(); }
++
++    protected final boolean hideSystemBars() {
++        return getSharedPreferences("display", MODE_PRIVATE).getBoolean("fullscreen", true);
++    }
++
++    protected final void setHideSystemBars(boolean hide) {
++        getSharedPreferences("display", MODE_PRIVATE).edit().putBoolean("fullscreen", hide).apply();
++        applyFullscreen(hide);
++    }
++
++    protected final boolean fillDisplay() {
++        return getSharedPreferences("display", MODE_PRIVATE).getBoolean("fill_display", false);
++    }
++
++    protected final void setFillDisplay(boolean fill) {
++        getSharedPreferences("display", MODE_PRIVATE).edit().putBoolean("fill_display", fill).apply();
++    }
++
++    protected final boolean onScreenButtons() { return touchPadVisible(); }
++    protected final void setOnScreenButtons(boolean visible) { saveTouchPadVisible(visible); }
++
++    private void showHomeIfReady() {
++        if (showingSetup || !ready()) return;
++        View home = buildHomeContent();
++        if (home != null) setContentView(home);
++    }
+ 
+     /** The Activity that runs the game; games may override. */
+     protected Class<?> gameActivityClass() {
+@@ -87,6 +142,7 @@ public class GbaSetupActivity extends Activity {
+         setContentView(buildContent());
+         enterImmersiveMode();
+         refreshStatus();
++        showHomeIfReady();
+         if (!ready()) return;
+         if (getIntent().getBooleanExtra(EXTRA_AUTOSTART, false)) {
+             startActivity(new Intent(this, gameActivityClass()));
+@@ -101,6 +157,7 @@ public class GbaSetupActivity extends Activity {
+         if (playButton != null) {
+             setContentView(buildContent());
+             refreshStatus();
++            showHomeIfReady();
+         }
+     }
+ 
+@@ -135,7 +192,7 @@ public class GbaSetupActivity extends Activity {
+             worker.execute(() -> {
+                 try {
+                     applyRomPatch(patch);
+-                    runOnUiThread(() -> { setBusy(false, null); refreshStatus(); });
++                    runOnUiThread(() -> { setBusy(false, null); refreshStatus(); showHomeIfReady(); });
+                 } catch (Exception error) {
+                     runOnUiThread(() -> {
+                         setBusy(false, null);
+@@ -155,6 +212,7 @@ public class GbaSetupActivity extends Activity {
+                 runOnUiThread(() -> {
+                     setBusy(false, null);
+                     refreshStatus();
++                    showHomeIfReady();
+                 });
+             } catch (Exception error) {
+                 runOnUiThread(() -> {
+@@ -266,53 +324,54 @@ public class GbaSetupActivity extends Activity {
+ 
+         LinearLayout preferences = new LinearLayout(this);
+         preferences.setOrientation(LinearLayout.VERTICAL);
+-
+-        Switch fullscreenSwitch = new Switch(this);
+-        fullscreenSwitch.setText("Hide system bars");
+-        fullscreenSwitch.setTextColor(Color.rgb(203, 212, 238));
+-        fullscreenSwitch.setTextSize(14);
+-        fullscreenSwitch.setMinHeight(dp(52));
+-        fullscreenSwitch.setChecked(getSharedPreferences("display", MODE_PRIVATE)
+-            .getBoolean("fullscreen", true));
+-        fullscreenSwitch.setOnCheckedChangeListener((button, checked) -> {
+-            getSharedPreferences("display", MODE_PRIVATE).edit()
+-                .putBoolean("fullscreen", checked).apply();
+-            applyFullscreen(checked);
+-        });
+-        preferences.addView(fullscreenSwitch);
+-        Switch fillSwitch = new Switch(this);
+-        fillSwitch.setText("Fill display (stretch)");
+-        fillSwitch.setTextColor(Color.rgb(203, 212, 238));
+-        fillSwitch.setTextSize(14);
+-        fillSwitch.setMinHeight(dp(52));
+-        fillSwitch.setChecked(getSharedPreferences("display", MODE_PRIVATE)
+-            .getBoolean("fill_display", false));
+-        fillSwitch.setOnCheckedChangeListener((button, checked) ->
+-            getSharedPreferences("display", MODE_PRIVATE).edit()
+-                .putBoolean("fill_display", checked).apply());
+-        preferences.addView(fillSwitch);
+-
+-        CheckBox touchPadCheck = new CheckBox(this);
+-        touchPadCheck.setText("Show on-screen game buttons");
+-        touchPadCheck.setTextColor(Color.rgb(203, 212, 238));
+-        touchPadCheck.setTextSize(14);
+-        touchPadCheck.setMinHeight(dp(52));
+-        touchPadCheck.setChecked(touchPadVisible());
+-        touchPadCheck.setOnCheckedChangeListener((button, checked) -> saveTouchPadVisible(checked));
+-        preferences.addView(touchPadCheck);
+-        addGameActions(preferences);
+-
+-        skipLauncherCheck = new CheckBox(this);
+-        skipLauncherCheck.setText("Skip this screen on launch when ready");
+-        skipLauncherCheck.setTextColor(Color.rgb(203, 212, 238));
+-        skipLauncherCheck.setTextSize(14);
+-        skipLauncherCheck.setMinHeight(dp(52));
+-        skipLauncherCheck.setChecked(skipLauncherOnBoot());
+-        skipLauncherCheck.setOnCheckedChangeListener((button, checked) ->
+-            getSharedPreferences(SETUP_PREFERENCES, MODE_PRIVATE)
+-                .edit().putBoolean(SKIP_LAUNCHER_ON_BOOT, checked).apply());
+-        if (supportsAutomaticLaunch()) preferences.addView(skipLauncherCheck);
+-        else skipLauncherCheck = null;
++        if (setupShowsOptions()) {
++            Switch fullscreenSwitch = new Switch(this);
++            fullscreenSwitch.setText("Hide system bars");
++            fullscreenSwitch.setTextColor(Color.rgb(203, 212, 238));
++            fullscreenSwitch.setTextSize(14);
++            fullscreenSwitch.setMinHeight(dp(52));
++            fullscreenSwitch.setChecked(getSharedPreferences("display", MODE_PRIVATE)
++                .getBoolean("fullscreen", true));
++            fullscreenSwitch.setOnCheckedChangeListener((button, checked) -> {
++                getSharedPreferences("display", MODE_PRIVATE).edit()
++                    .putBoolean("fullscreen", checked).apply();
++                applyFullscreen(checked);
++            });
++            preferences.addView(fullscreenSwitch);
++            Switch fillSwitch = new Switch(this);
++            fillSwitch.setText("Fill display (stretch)");
++            fillSwitch.setTextColor(Color.rgb(203, 212, 238));
++            fillSwitch.setTextSize(14);
++            fillSwitch.setMinHeight(dp(52));
++            fillSwitch.setChecked(getSharedPreferences("display", MODE_PRIVATE)
++                .getBoolean("fill_display", false));
++            fillSwitch.setOnCheckedChangeListener((button, checked) ->
++                getSharedPreferences("display", MODE_PRIVATE).edit()
++                    .putBoolean("fill_display", checked).apply());
++            preferences.addView(fillSwitch);
++
++            CheckBox touchPadCheck = new CheckBox(this);
++            touchPadCheck.setText("Show on-screen game buttons");
++            touchPadCheck.setTextColor(Color.rgb(203, 212, 238));
++            touchPadCheck.setTextSize(14);
++            touchPadCheck.setMinHeight(dp(52));
++            touchPadCheck.setChecked(touchPadVisible());
++            touchPadCheck.setOnCheckedChangeListener((button, checked) -> saveTouchPadVisible(checked));
++            preferences.addView(touchPadCheck);
++            addGameActions(preferences);
++
++            skipLauncherCheck = new CheckBox(this);
++            skipLauncherCheck.setText("Skip this screen on launch when ready");
++            skipLauncherCheck.setTextColor(Color.rgb(203, 212, 238));
++            skipLauncherCheck.setTextSize(14);
++            skipLauncherCheck.setMinHeight(dp(52));
++            skipLauncherCheck.setChecked(skipLauncherOnBoot());
++            skipLauncherCheck.setOnCheckedChangeListener((button, checked) ->
++                getSharedPreferences(SETUP_PREFERENCES, MODE_PRIVATE)
++                    .edit().putBoolean(SKIP_LAUNCHER_ON_BOOT, checked).apply());
++            if (supportsAutomaticLaunch()) preferences.addView(skipLauncherCheck);
++            else skipLauncherCheck = null;
++        }
+         footer.addView(preferences, vertical
+             ? margins(-2, -2, 0, 0, 0, dp(8)) : weightedMargins(1, 0, 0, dp(18), 0));
+ 

@@ -6,17 +6,21 @@
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-permission android:name="android.permission.VIBRATE" />
-    <!-- RetroAchievements login and unlocks (HTTPS). -->
+    <!-- RetroAchievements (HTTPS) and cloud saves (RomM / Hoard; self-hosted
+         servers on a home network are often plain http, hence cleartext). -->
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="false"
+        android:appCategory="game"
+        android:isGame="true"
         android:hardwareAccelerated="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher"
         android:resizeableActivity="true"
-        android:theme="@style/GbaTheme">
+        android:theme="@style/GbaTheme"
+        android:usesCleartextTraffic="true">
         <meta-data android:name="gbarecomp.title" android:value="${gbaTitle}" />
         <meta-data android:name="gbarecomp.rom_label" android:value="${gbaRomLabel}" />
         <meta-data android:name="gbarecomp.rom_sha1" android:value="${gbaRomSha1}" />
@@ -30,12 +34,15 @@
         <meta-data android:name="gbarecomp.setup_note" android:value="${gbaSetupNote}" />
         <meta-data android:name="gbarecomp.gyro" android:value="${gbaGyro}" />
 
+        <!-- Not singleTask: relaunching a singleTask root from the launcher
+             finishes the activities above it, so the suspended game was
+             destroyed and the player landed on PLAY instead of the game. -->
         <activity
             android:name="com.ylports.mother3recomp.Mother3SetupActivity"
             android:alwaysRetainTaskState="true"
             android:configChanges="layoutDirection|locale|orientation|uiMode|screenLayout|screenSize|smallestScreenSize|keyboard|keyboardHidden|navigation|density"
             android:exported="true"
-            android:launchMode="singleTask"
+            android:launchMode="singleTop"
             android:preferMinimalPostProcessing="true"
             android:screenOrientation="${gbaActivityOrientation}">
             <intent-filter>
