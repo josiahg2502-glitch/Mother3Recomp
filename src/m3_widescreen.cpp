@@ -21,8 +21,8 @@ namespace {
 constexpr std::uint32_t kCamera = 0x02001004;     // s16 x, s16 y: world px of the screen's top-left
 constexpr std::uint32_t kLayerPtrs = 0x02005C5C;  // 3 x u32: decompressed layer 0..2 (u16 per 16px cell)
 constexpr std::uint32_t kTileDataPtr = 0x02009C88;  // u32: 0x300 x 8-byte 16px tile definitions
-constexpr std::uint32_t kMapId = 0x020281E4;
 constexpr std::uint32_t kGame = 0x02005C00;  // gGame
+constexpr std::uint32_t kMapId = kGame + 0x67AC;  // u16 current map (indexes the map info tables)
 // Per layer, gGame+0x1C + 4*layer (MapLayerInfo): width in bits 0-2 and height
 // in bits 3-5, in 256px units minus one; bits 6-7 == 3 loop it horizontally,
 // and the next byte's bits 0-1 == 3 vertically.
@@ -41,15 +41,16 @@ struct Field {
     std::uint32_t tiles = 0;
     int width = 0, height = 0;  // in 16px cells
     int map = -1;
-    // Layer 0 can be a sky or weather layer with its own size, scroll and
-    // looping instead of part of the scenery; then it is "detached".
-    bool detached = false;
-    int lw = 0, lh = 0;  // layer 0 size in 16px cells
-    bool loop_x = false, loop_y = false;
+    // A layer can be a sky, weather or parallax backdrop with its own size,
+    // scroll and looping instead of part of the scenery; then it is "detached".
+    bool detached[3] = {};
+    int lw[3] = {}, lh[3] = {};  // layer sizes in 16px cells
+    bool loop_x[3] = {}, loop_y[3] = {};
+    bool on[3] = {};  // the layer's BG is enabled
 };
 Field g;  // written by tick(), read by the provider (both on the game thread)
-bool g_battle = false;
-Uint32 g_next = 0;
+bool g_state_loaded = false;  // state_loaded() asks tick() to validate now
+bool g_field_now = false, g_battle_now = false;  // what the frame being rendered shows (frame_start)
 int g_misses = 0;  // consecutive failed checks of the field still in use
 int g_margin_left = 0, g_margin_right = 0;  // margin widths of the widened view, set by tick()
 int g_margin_top = 0, g_margin_bottom = 0;   // rows above and below the native 160
@@ -105,24 +106,30 @@ int snap16(int var, int low) {
     return low + 16 * ((d >= 0 ? d + 8 : d - 8) / 16);
 }
 
-// Like camera(), for the BG showing a layer: a detached layer 0 (BG1) scrolls
-// by its own column/row, again snapped to the scroll registers.
+// Like camera(), for the BG showing a layer (BG n shows layer n - 1): a
+// detached layer scrolls by its own column/row, again snapped to the scroll
+// registers.
 void origin(const Field& f, const std::uint8_t* r, int bg, int* x, int* y) {
-    if (bg != 1 || !f.detached) {
+    if (!f.detached[bg - 1]) {
         camera(r, bg, x, y);
         return;
     }
-    const int lx = io16(r, 0x14) & 15, ly = io16(r, 0x16) & 15;
-    *x = snap16(16 * ew16(kLayerScroll) + (ew16(kLayerScroll + 8) & 15), lx);
-    *y = snap16(16 * ew16(kLayerScroll + 2) + (ew16(kLayerScroll + 10) & 15), ly);
+    const std::uint32_t sc = kLayerScroll + 0x38u * (bg - 1);
+    const int lx = io16(r, 0x10 + 4 * bg) & 15, ly = io16(r, 0x12 + 4 * bg) & 15;
+    *x = snap16(16 * ew16(sc) + (ew16(sc + 8) & 15), lx);
+    *y = snap16(16 * ew16(sc + 2) + (ew16(sc + 10) & 15), ly);
 }
+
+// The BG whose camera the rooms and the native view follow: one showing scenery
+// (some rooms turn BG2 off and keep their scenery on BG3).
+int scenery_bg(const Field& f, const std::uint8_t* r) { return !f.detached[1] && (io16(r, 0) & 0x400) ? 2 : 3; }
 
 // BG text entry for world 8px tile (tx, ty) of `layer`, or -1 outside the map.
 int entry_at(const Field& f, int layer, int tx, int ty) {
-    const bool own = layer == 0 && f.detached;
-    const int w = own ? f.lw : f.width, h = own ? f.lh : f.height;
-    if (own && f.loop_x) tx = ((tx % (2 * w)) + 2 * w) % (2 * w);
-    if (own && f.loop_y) ty = ((ty % (2 * h)) + 2 * h) % (2 * h);
+    const bool own = f.detached[layer];
+    const int w = own ? f.lw[layer] : f.width, h = own ? f.lh[layer] : f.height;
+    if (own && f.loop_x[layer]) tx = ((tx % (2 * w)) + 2 * w) % (2 * w);
+    if (own && f.loop_y[layer]) ty = ((ty % (2 * h)) + 2 * h) % (2 * h);
     if (!f.layer[layer] || tx < 0 || ty < 0 || tx >= 2 * w || ty >= 2 * h) return -1;
     const std::uint16_t cell = ew16(f.layer[layer] + 2u * std::uint32_t((ty >> 1) * w + (tx >> 1)));
     const int t = cell & 0x3FF;
@@ -141,8 +148,8 @@ int entry_at(const Field& f, int layer, int tx, int ty) {
 // tile 0 (the empty tile); map tile 0 itself can be real ground outdoors.
 bool void_cell(const Field& f, int cx, int cy) {
     if (cx < 0 || cy < 0 || cx >= f.width || cy >= f.height) return true;
-    for (int L = f.detached ? 1 : 0; L < 3; ++L)  // a detached layer 0 isn't scenery
-        for (int q = 0; q < 4; ++q) {
+    for (int L = 0; L < 3; ++L)
+        for (int q = 0; q < 4 && f.on[L] && !f.detached[L]; ++q) {  // a detached or hidden layer isn't scenery
             const int e = entry_at(f, L, 2 * cx + (q & 1), 2 * cy + (q >> 1));
             if (e > 0 && (e & 0x3FF) != 0) return false;
         }
@@ -194,33 +201,38 @@ double visible_match(const Field& f, const std::uint8_t* r, const std::uint8_t* 
     return total ? double(ok) / total : 0.0;
 }
 
-// The field's BG setup: mode 0, BG2+BG3 on (BG1 optional), 256x256 4bpp text maps.
+// The field's BG setup: mode 0, BG2 and/or BG3 on (BG1 optional), 256x256 4bpp
+// text maps. Battles look the same but keep BG2/BG3 at screen blocks 29/28.
 bool field_layout(const std::uint8_t* r) {
     const int dispcnt = io16(r, 0);
-    if ((dispcnt & 7) != 0 || (dispcnt & 0x0C00) != 0x0C00) return false;
+    if ((dispcnt & 7) != 0 || (dispcnt & 0x0C00) == 0) return false;
     for (int bg = 1; bg <= 3; ++bg) {
         const int cnt = io16(r, 0x08 + 2 * bg);
         if ((cnt >> 14) != 0 || (cnt & 0x80)) return false;
     }
-    return true;
+    return ((io16(r, 0x0C) >> 8) & 31) != 29 || ((io16(r, 0x0E) >> 8) & 31) != 28;
 }
 
-// Scores the model per BG. The scenery layers (BG2, BG3) must match; BG1 joins
-// only when it also matches (or is empty), so a layer we can't reproduce is
-// left blank in the margins rather than drawn wrong.
+// Scores the model per BG. The scenery layers on BG2 and BG3 must match (at
+// least one must be on); BG1 and detached layers join only when they also
+// match (or are empty), so a layer we can't reproduce is left blank in the
+// margins rather than drawn wrong. A BG that is off isn't drawn and says nothing.
 bool score(Field& f, const std::uint8_t* r, const std::uint8_t* vram, double need, int* samples_out) {
     int samples_all = 0;
-    bool ok = true;
+    bool ok = true, scenery = false;
     for (int bg = 1; bg <= 3; ++bg) {
+        f.bg_ok[bg] = false;
+        if (!(io16(r, 0) & (0x100 << bg))) continue;
+        scenery |= bg >= 2 && !f.detached[bg - 1];
         int samples = 0;
         const double m = visible_match(f, r, vram, bg, &samples);
-        // A detached layer 0 says nothing about the scenery width under test.
-        if (bg >= 2 || !f.detached) samples_all += samples;
+        // A detached layer says nothing about the scenery width under test.
+        if (!f.detached[bg - 1]) samples_all += samples;
         f.bg_ok[bg] = f.layer[bg - 1] && (samples == 0 || m >= need);
-        if (bg >= 2 && samples > 0 && m < need) ok = false;
+        if (bg >= 2 && !f.detached[bg - 1] && samples > 0 && m < need) ok = false;
     }
     *samples_out = samples_all;
-    return ok && samples_all > 0;
+    return ok && scenery && samples_all > 0;
 }
 
 // Interior maps pack several rooms; a margin point belongs to this one only if
@@ -244,11 +256,17 @@ int void_width(int cx, int cy, int y, bool left) {
     return 0;
 }
 
+// A parallax backdrop on BG3 (layer 2 looping on its own) fills the void
+// natively, so the margins need no centring black there.
+bool backdrop() { return g.detached[2] && (g.loop_x[2] || g.loop_y[2]) && g.bg_ok[3]; }
+
 // When the camera sits at a map edge (cutscenes often park it there) one margin is
-// void. Blacking the same width on the other side keeps the native picture centred
-// instead of looking shoved sideways; the black shrinks evenly as the camera moves on.
+// void. Voiding the same width on the other side (black in most maps) keeps the
+// native picture centred instead of looking shoved sideways; it shrinks evenly as
+// the camera moves on.
 // Rows above and below the native screen follow its first and last row.
 int black_width(int cx, int cy, int y) {
+    if (backdrop()) return 0;
     static int s_cx = -100000, s_cy = 0, s_map = -1;
     static std::uint32_t s_layer = 0;
     static std::int8_t s_width[160];
@@ -304,14 +322,14 @@ bool obj_shows_in_margin(int sx, int sy, int w, int h) {
     const int py = std::clamp(sy + h - 1, -g_margin_top, 159 + g_margin_bottom);  // feet
     if (px >= 0 && px < 240 && py >= 0 && py < 160) return true;
     int cx, cy;
-    camera(r, 2, &cx, &cy);
+    camera(r, scenery_bg(g, r), &cx, &cy);
     return in_room(cx, cy, px, py) && !in_black(cx, cy, px, py) && !hidden_outside_windows(r, 0x10);
 }
 
 // Sprites reaching into a margin from another room (furniture next door, parked
 // actors) are moved off the canvas; sprites in this room show as usual.
 int place_obj(int, std::uint16_t attr0, std::uint16_t attr1, std::uint16_t, int* out_sx) {
-    if (!g.ok) return 0;
+    if (!g_field_now) return 0;
     int sx, sy, w, h;
     if (!obj_box(attr0, attr1, &sx, &sy, &w, &h)) return 0;
     const bool native = sx >= 0 && sx + w <= 240;  // within the native columns
@@ -319,16 +337,157 @@ int place_obj(int, std::uint16_t attr0, std::uint16_t attr1, std::uint16_t, int*
     return 1;
 }
 
+// Text and numbers drawn over a BG0 window (the HP/PP boxes that SELECT slides
+// up from the bottom) are sprites, and the window carries more of them just
+// off screen (the meter's next digits). Above and below the screen such a
+// sprite keeps the hardware's reading, cut at the edge like on the GBA, when
+// BG0 is opaque under it: on the edge row (the window there continues below,
+// see extend_solid_edge) or in its own rows (a window not up to the edge
+// yet). Bars that cover the whole edge row are the exception.
+std::uint32_t bg0_entry_at(const std::uint8_t* r, int hx, int y);
+int bg0_color_at(const std::uint8_t* r, const std::uint8_t* vram, int hx, int y);
+bool covering_edge_row(const std::uint8_t* r, const std::uint8_t* vram, int y, std::uint16_t* fill);
+
+// Status windows against the bottom edge (the HP/PP boxes SELECT slides up,
+// at most 100 px wide each) are drawn g_margin_bottom rows lower, with their
+// interface sprites (place_obj_y): on the GBA they rest cut by the screen's
+// bottom edge and slide in from it, and so they do against the widened view's
+// bottom edge instead of stopping 10 rows short of it. The rows they leave
+// above show what is behind them. frame_start() finds them every frame.
+struct SlidingWindow { int left, right, top, offset; };
+SlidingWindow g_sliding[8];
+int g_sliding_count = 0;
+
+int slide_bg(int, int x, int y, int* source_x, int* source_y) {
+    for (int i = 0; i < g_sliding_count; ++i) {
+        const SlidingWindow& w = g_sliding[i];
+        if (!w.offset || x < w.left || x > w.right || y < w.top || y >= 160 + g_margin_bottom) continue;
+        const int from = y - w.offset;
+        if (from < w.top) return -1;
+        *source_x = x;
+        *source_y = from;
+        return 1;
+    }
+    return 0;
+}
+
+// Windows against the top or bottom edge (the HP/PP boxes SELECT slides up, a
+// menu) go on past it on the GBA, off screen, but the game draws only their
+// visible rows. Above and below the screen they continue from their own
+// tiles: the rest of the tile row the edge cuts through (those tiles' lower
+// pixels are in VRAM, e.g. the bottom of the "PP" line), then the side
+// borders and the interior, which repeat vertically. Per frame and edge, the
+// two BG0 entries for each tilemap column (bits 0-4), or -1. A run of opaque
+// edge pixels counts only when its side border tiles repeat one tile inwards
+// (a plain stretch of a bordered window, not its top border or a corner);
+// the interior is the commonest inner tile over its visible rows.
+struct WindowColumns {
+    std::uint64_t frame = ~std::uint64_t{0};
+    std::int32_t cut[32];   // the tile row the edge cuts through
+    std::int32_t fill[32];  // the rows past it
+};
+const WindowColumns& window_columns(const std::uint8_t* r, const std::uint8_t* vram, bool top) {
+    static WindowColumns s_cols[2];
+    gba::GbaPpu* ppu = gbarecomp::active_ppu();
+    const std::uint64_t frame = ppu ? ppu->frame_count() : 0;
+    WindowColumns& c = s_cols[top ? 0 : 1];
+    if (c.frame == frame) return c;
+    c.frame = frame;
+    std::fill(std::begin(c.cut), std::end(c.cut), -1);
+    std::fill(std::begin(c.fill), std::end(c.fill), -1);
+    const int ey = top ? 0 : 159, step = top ? 8 : -8;
+    const int hofs = io16(r, 0x10) & 0x1FF;
+    auto entry = [&](int hx, int y) {
+        const std::uint32_t at = bg0_entry_at(r, hx, y);
+        return static_cast<std::int32_t>(vram[at] | (vram[at + 1] << 8));
+    };
+    for (int hx = 0; hx < 240;) {
+        if (!bg0_color_at(r, vram, hx, ey)) { ++hx; continue; }
+        const int a = hx;
+        while (hx < 240 && bg0_color_at(r, vram, hx, ey)) ++hx;
+        const int b = hx - 1;
+        if (b - a < 23) continue;  // narrower than a bordered window
+        if (entry(a, ey) != entry(a, ey + step) || entry(b, ey) != entry(b, ey + step)) continue;
+        const int ta = (a + hofs) >> 3, tb = (b + hofs) >> 3;
+        if (tb - ta < 2) continue;
+        // The interior: the commonest inner tile over the window's visible rows.
+        std::int32_t interior = -1;
+        int best = 0, rows = 0;
+        for (int y = ey; y >= 0 && y < 160 && rows < 8 && bg0_color_at(r, vram, a, y); y += step, ++rows) {
+            for (int t = ta + 1; t < tb; ++t) {
+                const std::int32_t e = entry(t * 8 - hofs, y);
+                int n = 0;
+                for (int y2 = ey, k = 0; k <= rows; y2 += step, ++k)
+                    for (int u = ta + 1; u < tb; ++u) n += entry(u * 8 - hofs, y2) == e;
+                if (n > best) best = n, interior = e;
+            }
+        }
+        if (interior < 0 || best < tb - ta - 1) continue;  // not even one row's worth
+        for (int t = ta; t <= tb; ++t) {
+            c.cut[t & 31] = entry(std::clamp(t * 8 - hofs, a, b), ey);
+            c.fill[t & 31] = t == ta ? entry(a, ey) : t == tb ? entry(b, ey) : interior;
+        }
+    }
+    return c;
+}
+
+// The BG0 entry continuing the window at margin pixel (hx, y), or -1.
+std::int32_t window_entry(const std::uint8_t* r, const std::uint8_t* vram, int hx, int y) {
+    const bool top = y < 0;
+    const int ey = top ? 0 : 159;
+    if (!bg0_color_at(r, vram, hx, ey)) return -1;
+    const WindowColumns& c = window_columns(r, vram, top);
+    const int vofs = io16(r, 0x12) & 0x1FF, col = ((hx + (io16(r, 0x10) & 0x1FF)) >> 3) & 31;
+    return ((y + vofs) >> 3) == ((ey + vofs) >> 3) ? c.cut[col] : c.fill[col];
+}
+
+// For a sprite above or below the screen: 0 when it isn't over a window,
+// 1 over a window that continues there (the window's own name and digits:
+// drawn whole), 2 over one that doesn't (cut at the edge, like on the GBA).
+int window_state(int sx, int w, bool top) {
+    const std::uint8_t* r = io();
+    gba::GbaBus* bus = gbarecomp::active_bus();
+    if (!r || !bus || !(io16(r, 0) & 0x100)) return 0;  // BG0 off
+    const std::uint8_t* vram = bus->vram_ptr();
+    std::uint16_t fill;
+    if (covering_edge_row(r, vram, top ? -1 : 160, &fill)) return 0;  // a bar: BG0 continues
+    bool over = false, continued = true;
+    for (int hx = std::max(sx, 0); hx < std::min(sx + w, 240); ++hx) {
+        if (!bg0_color_at(r, vram, hx, top ? 0 : 159)) continue;
+        over = true;
+        if (window_entry(r, vram, hx, top ? -1 : 160) < 0) continued = false;
+    }
+    return !over ? 0 : continued ? 1 : 2;
+}
+
 // The rows above and below the native screen draw only sprites this accepts:
 // field sprites reaching there whose feet are in this room. Everything else
 // keeps the hardware's reading and stays within the native rows.
-int place_obj_y(int, std::uint16_t attr0, std::uint16_t attr1, std::uint16_t, int* out_sy) {
-    if (!g.ok || (!g_margin_top && !g_margin_bottom)) return 0;
+int place_obj_y(int, std::uint16_t attr0, std::uint16_t attr1, std::uint16_t attr2, int* out_sy) {
+    if (!g_field_now || (!g_margin_top && !g_margin_bottom)) return 0;
     int sx, sy, w, h;
     if (!obj_box(attr0, attr1, &sx, &sy, &w, &h)) return 0;
+    // Interface sprites over a status window move down with it (g_sliding).
+    if (((attr2 >> 10) & 3) == 0) {
+        for (int i = 0; i < g_sliding_count; ++i) {
+            const SlidingWindow& box = g_sliding[i];
+            if (box.offset && sx + w > box.left && sx <= box.right && sy + h > box.top - 16 && sy < 160 + g_margin_bottom) {
+                *out_sy = sy + box.offset;
+                return 1;
+            }
+        }
+    }
     if (sy >= 0 && sy + h <= 160) return 0;  // within the native rows
     if (sy + h <= -g_margin_top || sy >= 160 + g_margin_bottom) return 0;  // in neither margin
-    if (!obj_shows_in_margin(sx, sy, w, h)) return 0;
+    // Interface sprites (OBJ priority 0: names and digits over BG0 windows)
+    // show above and below the screen only over a window continuing there;
+    // the game parks the hidden box's name just off screen (Y 161-163).
+    // People and objects follow the field rules whatever window is near:
+    // where a window covers them it does so by layer priority, as on the GBA.
+    const bool interface = ((attr2 >> 10) & 3) == 0;
+    const int window = interface ? window_state(sx, w, sy < 0) : 0;
+    if (interface && window != 1) return 0;
+    if (window == 0 && !obj_shows_in_margin(sx, sy, w, h)) return 0;
     *out_sy = sy;
     return 1;
 }
@@ -355,7 +514,7 @@ int layer_px(int index, bool height) {  // sub_0801A61C / sub_0801A638
 }
 
 int overlap_view(std::uint32_t addr, int, ArmCpuState* cpu) {
-    if (!g.ok) return 0;
+    if (!g_field_now) return 0;
     const std::uint32_t rect = cpu->R[0], pos = cpu->R[1], size = cpu->R[2], actor = cpu->R[3];
     if (bus_read_u16(rect + 4) != 240 || bus_read_u16(rect + 6) != 160) return 0;  // not the view
     auto s16 = [](std::uint32_t a) { return static_cast<int>(static_cast<std::int16_t>(bus_read_u16(a))); };
@@ -474,7 +633,13 @@ int extend_solid_edge(const std::uint8_t* r, int hx, int y, std::uint16_t* out) 
     const int ex = std::clamp(hx, 0, 239), ey = std::clamp(y, 0, 159);
     if (y < 0 || y >= 160) {
         std::uint16_t fill;
-        if (!covering_edge_row(r, vram, y, &fill)) return gba::kWsTilemapUnavailable;
+        if (!covering_edge_row(r, vram, y, &fill)) {
+            // A window against the edge continues past it (window_columns).
+            const std::int32_t e = hx >= 0 && hx < 240 ? window_entry(r, vram, hx, y) : -1;
+            if (e < 0) return gba::kWsTilemapUnavailable;
+            *out = static_cast<std::uint16_t>(e);
+            return gba::kWsTilemapReplace;
+        }
         if (hx >= 0 && hx < 240) {
             *out = fill;
             return gba::kWsTilemapReplace;
@@ -529,12 +694,16 @@ struct RowView {
 
 int provide_field(const std::uint8_t* r, const RowView& v, int bg, int hx, int y, std::uint16_t* out) {
     if (bg == 0) return extend_solid_edge(r, hx, y, out);
-    if (bg == 1 && !g.bg_ok[1] && g.detached && g.lw == 16 && blended_overlay(r))
+    if (bg == 1 && !g.bg_ok[1] && g.detached[0] && g.lw[0] == 16 && blended_overlay(r))
         return gba::kWsTilemapKeepWrapped;
-    if (!g.bg_ok[bg] || !in_room(v.room_cx[bg], v.room_cy[bg], hx, y)) return gba::kWsTilemapUnavailable;
+    if (!g.bg_ok[bg]) return gba::kWsTilemapUnavailable;
+    // The void, another room or past the map shows what the game puts in an
+    // empty cell: entry 0, the layer's tile 0 (usually clear, a dark fill in
+    // some caves and buildings), so the margins match the void on screen.
+    *out = 0;
+    if (!g.detached[bg - 1] && !in_room(v.room_cx[bg], v.room_cy[bg], hx, y)) return gba::kWsTilemapReplace;
     const int e = entry_at(g, bg - 1, (v.org_x[bg] + hx) >> 3, (v.org_y[bg] + y) >> 3);
-    if (e <= 0) return gba::kWsTilemapUnavailable;
-    *out = static_cast<std::uint16_t>(e);
+    if (e > 0) *out = static_cast<std::uint16_t>(e);
     return gba::kWsTilemapReplace;
 }
 
@@ -543,11 +712,11 @@ int provide_field(const std::uint8_t* r, const RowView& v, int bg, int hx, int y
 // another 8px tile of the layer or another 16px room cell (in_room depends on
 // nothing else once the row is fixed), so both are kept.
 int provide(int bg, int hx, int y, std::uint16_t* out) {
-    if (g_battle) {
-        const std::uint8_t* r = io();
+    if (!g_field_now) {
+        const std::uint8_t* r = g_battle_now ? io() : nullptr;
         return r ? provide_battle(r, bg, y) : gba::kWsTilemapUnavailable;
     }
-    if (!g.ok || bg > 3) return gba::kWsTilemapUnavailable;
+    if (bg > 3) return gba::kWsTilemapUnavailable;
     static RowView s_row;
     if (s_row.frame != g_frame || s_row.gen != g_field_gen || s_row.y != y) {
         const std::uint8_t* r = io();
@@ -557,20 +726,28 @@ int provide(int bg, int hx, int y, std::uint16_t* out) {
         s_row.y = y;
         for (int b = 0; b <= 3; ++b) s_row.hidden[b] = hidden_outside_windows(r, 1 << b);
         int cx, cy;
-        camera(r, 2, &cx, &cy);
+        camera(r, scenery_bg(g, r), &cx, &cy);
         const int black = black_width(cx, cy, y);
         s_row.black_left = -g_margin_left + black;
         s_row.black_right = 240 + g_margin_right - black;
         for (int b = 1; b <= 3; ++b) {
-            camera(r, b == 1 && g.detached ? 2 : b, &s_row.room_cx[b], &s_row.room_cy[b]);  // rooms are in scenery coordinates
+            camera(r, g.detached[b - 1] ? scenery_bg(g, r) : b, &s_row.room_cx[b], &s_row.room_cy[b]);  // rooms are in scenery coordinates
             origin(g, r, b, &s_row.org_x[b], &s_row.org_y[b]);
         }
     }
-    if (s_row.hidden[bg] || hx < s_row.black_left || hx >= s_row.black_right)
-        return gba::kWsTilemapUnavailable;
+    if (s_row.hidden[bg]) return gba::kWsTilemapUnavailable;
+    // The centring black voids the scenery, as in provide_field; a detached
+    // layer (a sky, a backdrop, a cave's dark fill) goes on regardless of rooms.
+    if ((bg == 0 || !g.detached[bg - 1]) && (hx < s_row.black_left || hx >= s_row.black_right)) {
+        if (bg == 0 || !g.bg_ok[bg]) return gba::kWsTilemapUnavailable;
+        *out = 0;
+        return gba::kWsTilemapReplace;
+    }
     // BG0 answers per side (and, above and below the screen, once for the rest).
     const int cell = bg == 0 ? (hx < 0 ? -1 : hx >= 240 ? -2 : -3) : (s_row.room_cx[bg] + hx) >> 4;
-    const int tile = bg == 0 ? 0 : (s_row.org_x[bg] + hx) >> 3;
+    // Above and below the screen BG0's native columns are answered per pixel:
+    // a window continues only under its own opaque edge pixels.
+    const int tile = bg == 0 ? (cell == -3 && (y < 0 || y >= 160) ? hx : 0) : (s_row.org_x[bg] + hx) >> 3;
     struct Memo {
         std::uint32_t frame = ~0u;
         std::uint32_t gen = 0;
@@ -607,19 +784,22 @@ namespace {
 // map. The widened view stops there too: near an edge the native picture slides
 // towards it inside the canvas instead of the margins showing the void past the
 // map (which then took matching black on the other side, a black frame in the
-// corners). Looping maps, battles and other screens keep it centred.
+// corners). A map narrower than the canvas shows whole, centred, with the same
+// black on both sides. Looping maps, battles and other screens keep it centred.
 void place_native_view(gba::GbaPpu* ppu) {
     const int spare_x = static_cast<int>(ppu->render_width()) - 240;
     const int spare_y = static_cast<int>(ppu->render_height()) - 160;
     int left = static_cast<int>(ppu->view_extra_left()), top = static_cast<int>(ppu->view_extra_top());
     const std::uint8_t* r = io();
-    const bool placed = g.ok && r;
+    const bool placed = g_field_now && r;
     if (placed) {
         int cx, cy;
-        camera(r, 2, &cx, &cy);
+        camera(r, scenery_bg(g, r), &cx, &cy);
         const int loops = ew8(kMapLoops), map_w = 16 * g.width, map_h = 16 * g.height;
         if (!(loops & 0x20) && map_w >= 240 + spare_x) left = std::clamp(left, cx + 240 + spare_x - map_w, cx);
+        else if (!(loops & 0x20) && map_w > 240) left = cx + (240 + spare_x - map_w) / 2;
         if (!(loops & 0x10) && map_h >= 160 + spare_y) top = std::clamp(top, cy + 160 + spare_y - map_h, cy);
+        else if (!(loops & 0x10) && map_h > 160) top = cy + (160 + spare_y - map_h) / 2;
         left = std::clamp(left, 0, spare_x);
         top = std::clamp(top, 0, spare_y);
     }
@@ -633,15 +813,66 @@ void place_native_view(gba::GbaPpu* ppu) {
 
 // Each rendered frame: what it shows is settled by now (the game wrote its
 // scroll during vblank), so the placement matches the scroll it renders with.
+// Whether it is the validated field, a battle or neither is read from its own
+// registers, so a switch (a battle starting) takes effect on its first frame
+// rather than at the next field check.
 void frame_start() {
     ++g_frame;
+    const std::uint8_t* r = io();
+    g_field_now = g.ok && r && field_layout(r);
+    g_battle_now = !g_field_now && r && battle_layout(r);
+    gba::g_ws_pillarbox = g_field_now || g_battle_now ? 0 : 1;
     if (gba::GbaPpu* ppu = gbarecomp::active_ppu()) place_native_view(ppu);
+    g_sliding_count = 0;
+    gba::g_ws_bg_xy_provider = nullptr;
+    gba::GbaBus* bus = gbarecomp::active_bus();
+    if (!g_field_now || !r || !bus || !g_margin_bottom || !(io16(r, 0) & 0x100)) return;
+    const int cnt = io16(r, 0x08);
+    if ((cnt >> 14) != 0 || (cnt & 0x80)) return;
+    const std::uint8_t* vram = bus->vram_ptr();
+    for (int x = 0; x < 240 && g_sliding_count < 8;) {
+        if (!bg0_color_at(r, vram, x, 159)) { ++x; continue; }
+        const int left = x;
+        while (x < 240 && bg0_color_at(r, vram, x, 159)) ++x;
+        const int right = x - 1;
+        if (right - left < 23 || right - left > 100) continue;
+        // The window's top, scanning up its middle column.
+        int top = 159;
+        const int middle = (left + right) / 2;
+        while (top > 96 && bg0_color_at(r, vram, middle, top - 1)) --top;
+        g_sliding[g_sliding_count++] = {left, right, top, g_margin_bottom};
+    }
+    bool moving = false;
+    for (int i = 0; i < g_sliding_count; ++i) moving |= g_sliding[i].offset != 0;
+    if (moving) {
+        gba::g_ws_bg_xy_provider_layers = 1;
+        gba::g_ws_bg_xy_provider = &slide_bg;
+    }
 }
 
+// A layer is detached when its size or looping differs from the scenery's: a
+// sky on layer 0, a parallax backdrop or a narrower layer on 1 or 2 (for those
+// only widths compare: the scenery's height comes from its buffer size).
 void set_detached(Field& f) {
-    f.detached = f.layer[0] && (f.loop_x || f.loop_y || f.lw != f.width || f.lh != f.height);
+    for (int L = 0; L < 3; ++L)
+        f.detached[L] = f.layer[L] && (f.loop_x[L] || f.loop_y[L] || f.lw[L] != f.width || (L == 0 && f.lh[L] != f.height));
 }
 }  // namespace
+
+// After a state load (the suspend state on launch, a save slot) the PPU seeds
+// only the native centre from the snapshot, and the frames shown until the
+// next full render kept black margins: they popped in two frames late.
+// Validate the field now and render the whole frame, margins included.
+void state_loaded() {
+    g_state_loaded = true;
+    tick();
+    gba::GbaPpu* ppu = gbarecomp::active_ppu();
+    gba::GbaBus* bus = gbarecomp::active_bus();
+    const std::uint8_t* r = io();
+    if (!ppu || !bus || !r || ppu->render_width() <= 240 || !g.ok) return;
+    frame_start();
+    ppu->latch_framebuffer(io16(r, 0), r, bus->vram_ptr(), bus->oam_ptr(), bus->pal_ptr());
+}
 
 void tick() {
     // Only for a widened view; at 240px the PPU path stays untouched. run_game()
@@ -652,9 +883,19 @@ void tick() {
     // Hooks start disabled and a launch disables them again; at 240px they stay off.
     for (const char* id : kCullHooks)
         if (!gba_mod_function_hook_enabled(id)) gba_mod_set_function_hook_enabled(id, 1);
-    const Uint32 now = SDL_GetTicks();
-    if (now < g_next) return;
-    g_next = now + 50;
+    // Checked every third frame; for half a second after a map change (or a
+    // state load) every frame, so a map entered through a fade has its
+    // margins as it fades in.
+    static int s_map = -1, s_fast = 0, s_skip = 0;
+    if (const int map = ew16(kMapId); map != s_map || g_state_loaded) s_map = map, s_fast = 30;
+    g_state_loaded = false;
+    if (s_fast > 0) {
+        --s_fast;
+    } else if (s_skip > 0) {
+        --s_skip;
+        return;
+    }
+    s_skip = 2;
     gba::GbaBus* bus = gbarecomp::active_bus();
     const std::uint8_t* r = io();
     if (!bus || !r) return;
@@ -662,15 +903,15 @@ void tick() {
 
     Field f;
     f.map = ew16(kMapId);
-    for (int L = 0; L < 3; ++L) f.layer[L] = ew32(kLayerPtrs + 4u * L);
+    for (int L = 0; L < 3; ++L) f.layer[L] = ew32(kLayerPtrs + 4u * L), f.on[L] = io16(r, 0) & (0x200 << L);
     f.tiles = ew32(kTileDataPtr);
-    {
-        const int info = ew8(kLayerInfo), loops = ew8(kMapLoops);
-        const bool own_loop = ew8(kLayerScroll + 0x35) & 0x10;
-        f.lw = 16 * ((info & 7) + 1);
-        f.lh = 16 * (((info >> 3) & 7) + 1);
-        f.loop_x = (info >> 6) == 3 || own_loop || (loops & 0x20);
-        f.loop_y = (ew8(kLayerInfo + 1) & 3) == 3 || own_loop || (loops & 0x10);
+    for (int L = 0; L < 3; ++L) {
+        const int info = ew8(kLayerInfo + 4u * L), loops = L == 0 ? ew8(kMapLoops) : 0;  // a looping map loops layer 0's own way
+        const bool own_loop = ew8(kLayerScroll + 0x38u * L + 0x35) & 0x10;
+        f.lw[L] = 16 * ((info & 7) + 1);
+        f.lh[L] = 16 * (((info >> 3) & 7) + 1);
+        f.loop_x[L] = (info >> 6) == 3 || own_loop || (loops & 0x20);
+        f.loop_y[L] = (ew8(kLayerInfo + 4u * L + 1) & 3) == 3 || own_loop || (loops & 0x10);
     }
     // Layers are consecutive equal-size buffers; a map may leave layer 0 out (null).
     int cells = 0;
@@ -688,16 +929,20 @@ void tick() {
             set_detached(f);
             ok = score(f, r, vram, 0.85, &samples) && samples >= 60;
         }
-        if (!ok) {  // new map (or lost it): find the width that reproduces the screen
-            for (int w = 8; w <= 256 && !ok; ++w) {
-                if (cells % w) continue;
-                Field t = f;
-                t.width = w;
-                t.height = cells / w;
-                set_detached(t);
-                if (score(t, r, vram, 0.9, &samples) && samples >= 150) { f = t; ok = true; }
-            }
-        }
+        // New map (or lost it): find the width that reproduces the screen. The
+        // layers' own sizes come first: a screen of one repeated tile (a dark
+        // cave) also matches narrower widths, which then cut the map short.
+        auto try_width = [&](int w) {
+            if (ok || w < 8 || cells % w) return;
+            Field t = f;
+            t.width = w;
+            t.height = cells / w;
+            set_detached(t);
+            if (t.detached[1] && t.detached[2]) return;  // no scenery at this width
+            if (score(t, r, vram, 0.9, &samples) && samples >= 150) f = t, ok = true;
+        };
+        for (int L : {1, 2, 0}) try_width(f.lw[L]);
+        for (int w = 8; w <= 256; ++w) try_width(w);
     }
     // A validated field can fail one check mid-scroll; keep it for a couple of
     // ticks so the margins don't flash black, but still drop it on a real change.
@@ -710,13 +955,15 @@ void tick() {
     }
     f.ok = ok;
     if (!ok) f.width = f.height = 0;
-    g_battle = !ok && battle_layout(r);
-    if (ok != g.ok || f.map != g.map || f.width != g.width)
-        SDL_Log("m3-widescreen: map %d field=%d sane=%d width=%d layer0=%s%dx%d", f.map, ok, sane, f.width,
-                f.detached ? "detached " : "", f.lw, f.lh);
+    static bool s_sane = false;
+    if (ok != g.ok || f.map != g.map || f.width != g.width || sane != s_sane)
+        SDL_Log("m3-widescreen: map %d field=%d sane=%d width=%d layers %s%dx%d %s%dx%d %s%dx%d dispcnt=%04x bgcnt=%04x,%04x,%04x",
+                f.map, ok, sane, f.width, f.detached[0] ? "detached " : "", f.lw[0], f.lh[0], f.detached[1] ? "detached " : "",
+                f.lw[1], f.lh[1], f.detached[2] ? "detached " : "", f.lw[2], f.lh[2], io16(r, 0), io16(r, 0x0A), io16(r, 0x0C),
+                io16(r, 0x0E));
+    s_sane = sane;
     g = f;
     ++g_field_gen;
-    gba::g_ws_pillarbox = ok || g_battle ? 0 : 1;
 }
 
 }  // namespace m3widescreen

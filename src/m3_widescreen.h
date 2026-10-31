@@ -9,5 +9,6 @@ namespace m3widescreen {
 
 void install();  // registers the PPU margin providers (harmless at 240px); tick() calls it
 void tick();     // game thread; re-validates the field a few times a second
+void state_loaded();  // after a state load (suspend resume, slot): validate now
 
 }  // namespace m3widescreen
