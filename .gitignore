@@ -50,6 +50,7 @@ __pycache__/
 *.pyc
 
 recomp_coverage_*.json
+recomp_master_misses_*.toml.frag
 traces/
 
 # Android build output and local SDK path

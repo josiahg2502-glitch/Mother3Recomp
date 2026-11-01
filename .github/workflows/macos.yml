@@ -1,0 +1,73 @@
+name: macOS source build
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      native_asset_id:
+        description: "Encrypted native corpus asset on the draft release"
+        required: false
+      corpus_sha256:
+        description: "SHA256 of the decrypted source archive"
+        required: false
+permissions:
+  contents: write
+concurrency:
+  group: macos-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: brew install ninja sdl2
+      - name: Prepare pinned source
+        run: python3 tools/setup_deps.py
+      - name: Load private native corpus
+        if: inputs.native_asset_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NATIVE_ASSET_ID: ${{ inputs.native_asset_id }}
+          CORPUS_SHA256: ${{ inputs.corpus_sha256 }}
+          NATIVE_CORPUS_KEY: ${{ secrets.NATIVE_CORPUS_KEY }}
+        run: |
+          gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$NATIVE_ASSET_ID" > corpus.enc
+          openssl enc -d -aes-256-cbc -pbkdf2 -in corpus.enc -out corpus.tar.gz -pass env:NATIVE_CORPUS_KEY
+          echo "$CORPUS_SHA256  corpus.tar.gz" | shasum -a 256 -c -
+          tar -xzf corpus.tar.gz
+          test -f generated/dispatch_table.cpp
+      - name: Recompile private BIOS
+        if: inputs.native_asset_id != ''
+        run: |
+          test -f private-qa/bios.bin
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target gba_recompile -j3
+          ./build/gbarecomp_build/gba_recompile --bios private-qa/bios.bin --config gbarecomp/bios/gba_bios.toml --out gbarecomp/src/runtime/generated_bios
+      - name: Build game and regression checks
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target Mother3Recomp host_menu_test presentation_layout_tests touch_input_tests -j3
+      - name: Test runtime menu, input and layout
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: ctest --test-dir build -R 'host_menu_test|presentation_layout_tests|touch_input_tests' --output-on-failure
+      - name: Check native gameplay with private game files
+        if: inputs.native_asset_id != ''
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          if [ -f private-qa/rom.gba ] && [ -f private-qa/bios.bin ]; then
+            ./build/Mother3Recomp --no-launcher --window --uncapped --rom "$PWD/private-qa/rom.gba" --bios "$PWD/private-qa/bios.bin" --save-path "$PWD/private-qa/check.sav" --state-dir "$PWD/private-qa" --frames 1200
+            python3 tools/check_rom_gate.py build/Mother3Recomp private-qa/rom.gba private-qa/bios.bin
+          else
+            echo "Private gameplay inputs unavailable; native package build continues."
+          fi
+      - name: Package macOS build
+        run: python3 tools/package_release.py "$(cat version.txt)" macos-arm64 build/Mother3Recomp release-stage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Mother3Recomp-macos-arm64
+          path: release-stage/*.zip
+          if-no-files-found: error

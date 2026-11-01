@@ -11,6 +11,8 @@ Bring your own ROM and game files.
 | Linux x86_64 / Steam Deck | 1.0.8 | [Linux archive](https://github.com/josiahg2502-glitch/Mother3Recomp/releases/download/v1.0.8/Mother3Recomp-v1.0.8-linux-x86_64.tar.gz) |
 | Android (ARM64 and x86_64) | 1.0.8 | [Android APK](https://github.com/josiahg2502-glitch/Mother3Recomp/releases/download/v1.0.8/Mother3Recomp-v1.0.8-android.apk) |
 
+macOS arm64 builds from source with `tools/build_macos.sh`; no prebuilt download is published yet.
+
 **v1.0.8:** smooth motion at your screen's full refresh rate (144, 165, 240 Hz), save import from other emulators, a newer engine, a MOTHER 3-styled in-game menu, widescreen fixes, the launcher for the Japanese ROM and every translation, and RetroAchievements on Android. [What's new](https://github.com/josiahg2502-glitch/Mother3Recomp/releases/tag/v1.0.8)
 
 ## Features
