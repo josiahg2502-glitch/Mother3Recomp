@@ -38,8 +38,8 @@ MOTHER 3's own launcher opens: the party walks around outside Tazmily while you 
 **Controls** or **Mods**. Everything it shows is drawn from your ROM; no game art ships with the download.
 
 - **Settings:** window flavor (the game's Plain to Melon), display mode, window size, scaling, screen colors,
-  volume, **Button prompts**, **Frame rate**, **Import a save file**, and **Change game files** to pick a different
-  ROM or BIOS.
+  volume, **Button prompts**, **View size**, **Black bars**, **Frame rate**, **Import a save file**, and
+  **Change game files** to pick a different ROM or BIOS.
 - **Import a save file:** bring over a save from another emulator (mGBA, VBA, RetroArch, My Boy!, etc.). Pick its
   battery save (`.sav` or `.srm`, not a save state). Your current save is kept as `saves/mother3_en_v13.sav.bak`.
   On Android, use **Import a save from another emulator** on the setup screen.
@@ -62,9 +62,13 @@ MOTHER 3's own launcher opens: the party walks around outside Tazmily while you 
   in Settings if you prefer.
 - **Mods:** put `.ips`, `.bps` or `.ups` patches in the `mods` folder (the page has an **Open mods folder**
   button) and tick them. Mods that change game code are marked *slower*: they run in compatibility mode.
-- **Widescreen:** Settings > Widescreen shows 16:9 in towns, fields, rooms and battles: the field draws the real
-  map into the sides and battle backgrounds continue their pattern. Menus and anything else stay 4:3 with black
-  sides. At the edge of a map both sides go black by the same amount, so the picture stays centred, and screen wipes stay black outside. The bezel is not used in widescreen.
+- **View size:** 240x160 is the faithful GBA view, 256x160 matches a 16:10 screen exactly, and 284x160 is 16:9.
+  Above 240 the field draws the real map into the sides and battle backgrounds continue their pattern; menus and
+  anything else stay 4:3 with black sides, and at a map edge both sides go black by the same amount so the picture
+  stays centred. The bezel is not used with a widened view.
+- **Black bars:** **Keep** preserves the picture's aspect and leaves bars where the screen and the game disagree;
+  **Stretch** fills the whole window and removes those bars, at the cost of a slightly distorted aspect. Bars the
+  game itself draws (cutscenes, chapter cards, map edges) are part of the frame and are not removed by either.
 - **Bezel (Windows):** built from your ROM on first launch in your window flavor; F10 hides it.
 
 ## Controls

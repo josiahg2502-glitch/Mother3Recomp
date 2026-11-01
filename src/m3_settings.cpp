@@ -113,7 +113,10 @@ Settings load(const std::string& dir) {
     s.sharp_filter = to_int(cfg, "sharp_filter", 1, 0, 1) != 0;
     s.volume = to_int(cfg, "volume", s.volume, 0, 100);
     s.prompt_style = to_int(cfg, "m3_button_prompts", s.prompt_style, 0, 4);
-    s.widescreen = to_int(cfg, "m3_widescreen", 0, 0, 1) != 0;
+    const bool legacy_widescreen = to_int(cfg, "m3_widescreen", 0, 0, 1) != 0;
+    s.view_width = to_int(cfg, "m3_view_width", legacy_widescreen ? 284 : 240, 240, 284);
+    s.widescreen = s.view_width > 240;
+    s.fill_display = to_int(cfg, "m3_fill_display", 0, 0, 1) != 0;
     s.smooth = to_int(cfg, "m3_smooth_120", 0, 0, 2);
     s.hq_audio = to_int(cfg, "m3_hq_audio", 1, 0, 1) != 0;
     if (auto it = cfg.find("screen"); it != cfg.end())
@@ -134,6 +137,8 @@ void save(const std::string& dir, const Settings& s) {
                    {"screen", s.screen},
                    {"volume", std::to_string(s.volume)},
                    {"m3_button_prompts", std::to_string(s.prompt_style)},
+                   {"m3_view_width", std::to_string(s.view_width)},
+                   {"m3_fill_display", s.fill_display ? "1" : "0"},
                    {"m3_widescreen", s.widescreen ? "1" : "0"},
                    {"m3_smooth_120", std::to_string(s.smooth)},
                    {"m3_hq_audio", s.hq_audio ? "1" : "0"}});
@@ -146,7 +151,8 @@ std::vector<std::string> game_args(const Settings& s) {
     std::vector<std::string> args = {"--fullscreen=" + std::to_string(s.fullscreen), "--scale",
                                       std::to_string(s.scale), "--sharp-filter", s.sharp_filter ? "1" : "0",
                                       "--screen", s.screen, "--volume", std::to_string(s.volume)};
-    if (s.widescreen) args.insert(args.end(), {"--view-width", "284"});
+    if (s.view_width > 240) args.insert(args.end(), {"--view-width", std::to_string(s.view_width)});
+    if (s.fill_display) args.insert(args.end(), {"--fill-display", "1"});
     return args;
 }
 
