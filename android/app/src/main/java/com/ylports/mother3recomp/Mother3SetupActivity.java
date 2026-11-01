@@ -84,7 +84,7 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
     private static final int INK = Color.rgb(33, 33, 33);   // on cards
     private static final int INK_MUTED = Color.rgb(104, 92, 86);
 
-    private enum Page { HOME, SETTINGS, SAVES }
+    private enum Page { HOME, SETTINGS, SAVES, INFO }
 
     private Page page = Page.HOME;
     private GbaGameConfig gameConfig;
@@ -143,7 +143,8 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         final boolean back = key == KeyEvent.KEYCODE_BACK || key == KeyEvent.KEYCODE_BUTTON_B;
         final boolean away = page != Page.HOME || isSetupScreenShown();
         if (back && away && filesReady()) {
-            if (event.getAction() == KeyEvent.ACTION_UP) showPage(Page.HOME);
+            if (event.getAction() == KeyEvent.ACTION_UP)
+                showPage(page == Page.INFO && !isSetupScreenShown() ? Page.SETTINGS : Page.HOME);
             return true;
         }
         if (key == KeyEvent.KEYCODE_BUTTON_START && !away && filesReady()) {
@@ -168,7 +169,8 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
             return;
         }
         page = target;
-        setContentView(target == Page.SETTINGS ? buildSettings() : buildSaves());
+        setContentView(target == Page.SETTINGS ? buildSettings()
+            : target == Page.INFO ? buildInfo() : buildSaves());
     }
 
     /** Rebuilds the screen on show, so dates and statuses are current. */
@@ -384,12 +386,77 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
         files.setOnClickListener(view -> showSetupScreen());
         body.addView(files, size(-1, dp(52), dp(6), 0));
 
+        body.addView(section("About"));
+        View info = row("Info", "Versions of the game build and engine, files, device and frame rate.");
+        info.setOnClickListener(view -> showPage(Page.INFO));
+        body.addView(info);
+
         body.addView(section("Help"));
         Button diagnostics = button("Copy diagnostics", false);
         diagnostics.setOnClickListener(view -> copyDiagnostics());
         body.addView(diagnostics, size(-1, dp(52), 0, 0));
 
         return screen("Settings", body);
+    }
+
+    /** A build detail from app/build.gradle (resValue); the namespace follows the application id. */
+    private String buildString(String name) {
+        int id = getResources().getIdentifier(name, "string", getPackageName());
+        return id != 0 ? getString(id) : "?";
+    }
+
+    /** What this build is and what it runs on: for bug reports and curiosity. */
+    private View buildInfo() {
+        LinearLayout body = column();
+        final StringBuilder copy = new StringBuilder();
+        final java.util.function.BiConsumer<String, String> item = (title, detail) -> {
+            body.addView(row(title, detail));
+            copy.append(title).append(": ").append(detail).append('\n');
+        };
+        String version = "?";
+        long code = 0;
+        try {
+            android.content.pm.PackageInfo pkg = getPackageManager().getPackageInfo(getPackageName(), 0);
+            version = pkg.versionName;
+            code = pkg.getLongVersionCode();
+        } catch (android.content.pm.PackageManager.NameNotFoundException ignored) {
+            // the running package always exists
+        }
+        android.view.Display display = getWindowManager().getDefaultDisplay();
+        android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
+        display.getRealMetrics(metrics);
+        final float hz = display.getRefreshRate();
+
+        body.addView(section("Build"));
+        item.accept("Game", "MOTHER 3 Recomp " + version + " (" + code + "), build "
+            + buildString("m3_info_commit"));
+        item.accept("Engine", buildString("m3_info_engine"));
+        item.accept("Libraries", buildString("m3_info_libraries"));
+
+        body.addView(section("Files"));
+        item.accept("ROM", (romInstalled() ? "Verified" : "Missing") + ", " + gameConfig.romFile
+            + (audioMode() == 1 ? " with the HQ audio patch" : ""));
+        item.accept("BIOS", biosInstalled() ? "GBA BIOS verified" : "Built-in substitute (no BIOS file)");
+
+        body.addView(section("Device"));
+        item.accept("Model", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL);
+        item.accept("System", "Android " + android.os.Build.VERSION.RELEASE + " (API "
+            + android.os.Build.VERSION.SDK_INT + "), " + android.os.Build.SUPPORTED_ABIS[0]);
+        item.accept("Display", metrics.widthPixels + " x " + metrics.heightPixels + ", "
+            + Math.round(hz) + " Hz");
+        item.accept("Frame rate", "The game runs at the GBA's 59.73 fps and the display refreshes at "
+            + Math.round(hz) + " Hz. Smooth motion (120 fps) is a desktop option for 100 Hz+ "
+            + "monitors; Android always shows the game's own frames.");
+
+        Button copyInfo = button("Copy info", false);
+        copyInfo.setOnClickListener(view -> {
+            android.content.ClipboardManager clipboard = (android.content.ClipboardManager)
+                getSystemService(CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(android.content.ClipData.newPlainText("MOTHER 3 info", copy.toString()));
+            Toast.makeText(this, "Info copied", Toast.LENGTH_SHORT).show();
+        });
+        body.addView(copyInfo, size(-1, dp(52), dp(16), 0));
+        return screen("Info", body, Page.SETTINGS);
     }
 
     private View buildSaves() {
@@ -443,12 +510,17 @@ public final class Mother3SetupActivity extends GbaSetupActivity {
 
     /** A titled screen: Back, the title, and a scrolling body. */
     private View screen(String title, LinearLayout body) {
+        return screen(title, body, Page.HOME);
+    }
+
+    /** A titled screen: Back (to {@code parent}), the title, and a scrolling body. */
+    private View screen(String title, LinearLayout body, Page parent) {
         LinearLayout root = column();
         root.setPadding(dp(48), dp(20), dp(48), 0);
         LinearLayout header = new LinearLayout(this);
         header.setGravity(Gravity.CENTER_VERTICAL);
         Button back = button("‹  Back", false);
-        back.setOnClickListener(view -> showPage(Page.HOME));
+        back.setOnClickListener(view -> showPage(parent));
         header.addView(back, size(dp(140), dp(48), 0, 0, 0, dp(24)));
         TextView heading = text(title, 24, TEXT);
         heading.setTypeface(bold());

@@ -56,6 +56,23 @@ ext.gbaGame = [
 
 apply from: new File(engineRoot, "platform/android/gbarecomp-app.gradle")
 
+// Build details for Settings > Info: the pinned engine and libraries
+// (dependencies.lock.json) and this repository's commit ("+" when it has
+// uncommitted changes).
+def lock = new groovy.json.JsonSlurper().parse(new File(gameRoot, "dependencies.lock.json"))
+def cliVersion = (new File(engineRoot, "tools/cli.py").text =~ /VERSION = "([^"]+)"/)
+def engineVersion = cliVersion.find() ? cliVersion.group(1) : "?"
+def gitOutput = { List<String> command ->
+    try { return command.execute(null, gameRoot).text.trim() } catch (ignored) { return "" }
+}
+def appCommit = gitOutput(["git", "rev-parse", "--short", "HEAD"]) ?: "?"
+if (gitOutput(["git", "status", "--porcelain", "--untracked-files=no"])) appCommit += "+"
+android.defaultConfig.resValue "string", "m3_info_engine",
+    "gbarecomp ${engineVersion} (${lock.gbarecomp.revision.take(7)}), patch ${lock.gbarecomp.sha256.take(8)}"
+android.defaultConfig.resValue "string", "m3_info_libraries",
+    "recomp-ui ${lock['recomp-ui'].revision.take(7)}, rcheevos ${lock['third_party/rcheevos'].revision.take(7)}"
+android.defaultConfig.resValue "string", "m3_info_commit", appCommit
+
 android.sourceSets.main.manifest.srcFile file("src/main/AndroidManifest.xml")
 android.sourceSets.main.java.srcDir file("src/main/java")
 
