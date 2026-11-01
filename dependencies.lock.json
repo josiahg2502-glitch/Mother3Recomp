@@ -19,7 +19,7 @@
     "url": "https://github.com/mstan/recomp-ui.git",
     "revision": "41c88ffea852b970af8d50312620b17404e455ad",
     "patch": "patches/recomp-ui-runtime.patch",
-    "sha256": "119de28698b5d2a5946519c58ea7471030b07ae2d3e55a438d5e4e2b957c5a5e"
+    "sha256": "bc73b177707ac90f80b7035b2b83e2ae7f181903b69148a4df5e8eb72ac7819b"
   },
   "third_party/rcheevos": {
     "url": "https://github.com/RetroAchievements/rcheevos.git",

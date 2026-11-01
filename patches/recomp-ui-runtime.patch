@@ -108,10 +108,10 @@ index cbae6e9..8597c2f 100644
              }
              if (m->has_assist_tools) {
 diff --git a/src/common/backends/imgui/runtime_ui_imgui.cpp b/src/common/backends/imgui/runtime_ui_imgui.cpp
-index faf17f8..d3b91a2 100644
+index faf17f8..563c0b3 100644
 --- a/src/common/backends/imgui/runtime_ui_imgui.cpp
 +++ b/src/common/backends/imgui/runtime_ui_imgui.cpp
-@@ -302,6 +302,350 @@ void draw_toast(RecompRuntimeUi *ui, const LauncherTheme &theme) {
+@@ -302,6 +302,416 @@ void draw_toast(RecompRuntimeUi *ui, const LauncherTheme &theme) {
      ImGui::PopStyleVar(3);
  }
  
@@ -196,8 +196,13 @@ index faf17f8..d3b91a2 100644
 +    ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + height + theme.spacing_sm));
 +}
 +
++// A scrolled edge of the items page: a band holding an arrow, then a fade.
++float fade_band() { return ImGui::GetTextLineHeight() * 0.84f; }
++float fade_ramp(const LauncherTheme &theme) { return theme.row_height * 0.6f; }
++
++// A drag past the touch slop scrolls the page instead of picking a row.
 +void card_items(RecompRuntimeUi *ui, const LauncherTheme &theme, bool touch_friendly,
-+                float rim) {
++                float rim, bool dragged) {
 +    static size_t s_last_row = static_cast<size_t>(-1);
 +    static size_t s_last_section = static_cast<size_t>(-1);
 +    const bool moved = ui->row_index != s_last_row || ui->section_index != s_last_section;
@@ -229,12 +234,21 @@ index faf17f8..d3b91a2 100644
 +        if (item && (item->type == RECOMP_RUNTIME_UI_INT || item->type == RECOMP_RUNTIME_UI_TEXT))
 +            ImGui::SetNextItemAllowOverlap();
 +        if (!enabled) ImGui::BeginDisabled();
-+        const bool clicked = ImGui::InvisibleButton("##row", ImVec2(width, row_h));
-+        if (ImGui::IsItemHovered()) {
++        const bool clicked = ImGui::InvisibleButton("##row", ImVec2(width, row_h)) && !dragged;
++        if (ImGui::IsItemHovered() && !dragged) {
 +            ui->row_index = index;
 +            ui->in_section = 1;
++            s_last_row = index; // picked by the pointer, so already in view
 +        }
-+        if (selected && moved) ImGui::SetScrollHereY(0.5f);
++        if (selected && moved) {
++            // Centre a row only when it is cut off or under a fade.
++            const float top = ImGui::GetWindowPos().y;
++            const float bottom = top + ImGui::GetWindowHeight();
++            const float edge = fade_band() + fade_ramp(theme) * 0.5f;
++            if ((start.y < top + edge && ImGui::GetScrollY() > 0.5f) ||
++                (end.y > bottom - edge && ImGui::GetScrollY() < ImGui::GetScrollMaxY() - 0.5f))
++                ImGui::SetScrollHereY(0.5f);
++        }
 +        card_rect(draw, start, end, theme, selected ? theme.panel_hovered : theme.background,
 +                  selected ? &theme.accent : nullptr, rim);
 +
@@ -321,13 +335,13 @@ index faf17f8..d3b91a2 100644
 +                const float button_h = std::max(ImGui::GetFrameHeight(), row_h * 0.66f);
 +                ImGui::SetCursorScreenPos(ImVec2(end.x - theme.spacing_sm - step_w * 2.0f - step_gap,
 +                                                 start.y + (row_h - button_h) * 0.5f));
-+                if (card_button("##minus", "-", ImVec2(step_w, button_h), theme, rim)) {
++                if (card_button("##minus", "-", ImVec2(step_w, button_h), theme, rim) && !dragged) {
 +                    ui->row_index = index;
 +                    ui->in_section = 1;
 +                    recomp_runtime_ui_adjust_current(ui, -1, 1, 0);
 +                }
 +                ImGui::SameLine(0.0f, step_gap);
-+                if (card_button("##plus", "+", ImVec2(step_w, button_h), theme, rim)) {
++                if (card_button("##plus", "+", ImVec2(step_w, button_h), theme, rim) && !dragged) {
 +                    ui->row_index = index;
 +                    ui->in_section = 1;
 +                    recomp_runtime_ui_adjust_current(ui, 1, 1, 0);
@@ -342,13 +356,46 @@ index faf17f8..d3b91a2 100644
 +    }
 +}
 +
++// At an edge of the current window with more content beyond it, a small muted
++// arrow pointing that way in the band the content is clipped short of, and a
++// fade into the ground beside it.
++void scroll_fades(const LauncherTheme &theme, int ground_alpha) {
++    ImDrawList *draw = ImGui::GetWindowDrawList();
++    const ImVec2 pos = ImGui::GetWindowPos();
++    const ImVec2 size = ImGui::GetWindowSize();
++    const float band = fade_band();
++    const float fade = fade_ramp(theme);
++    const float arrow = band / 3.0f;
++    const float left = pos.x, right = pos.x + size.x, mid = pos.x + size.x * 0.5f;
++    const ImU32 ground = IM_COL32(0, 0, 0, ground_alpha);
++    const ImU32 clear = IM_COL32(0, 0, 0, 0);
++    const ImU32 ink = u32(theme.background, 0.7f);
++    if (ImGui::GetScrollY() > 0.5f) {
++        const float top = pos.y + band;
++        draw->AddRectFilledMultiColor(ImVec2(left, top), ImVec2(right, top + fade),
++                                      ground, ground, clear, clear);
++        draw->AddTriangleFilled(ImVec2(mid - arrow * 1.6f, top - band * 0.5f + arrow * 0.8f),
++                                ImVec2(mid + arrow * 1.6f, top - band * 0.5f + arrow * 0.8f),
++                                ImVec2(mid, top - band * 0.5f - arrow * 0.8f), ink);
++    }
++    if (ImGui::GetScrollY() < ImGui::GetScrollMaxY() - 0.5f) {
++        const float bottom = pos.y + size.y - band;
++        draw->AddRectFilledMultiColor(ImVec2(left, bottom - fade), ImVec2(right, bottom),
++                                      clear, clear, ground, ground);
++        draw->AddTriangleFilled(ImVec2(mid - arrow * 1.6f, bottom + band * 0.5f - arrow * 0.8f),
++                                ImVec2(mid + arrow * 1.6f, bottom + band * 0.5f - arrow * 0.8f),
++                                ImVec2(mid, bottom + band * 0.5f + arrow * 0.8f), ink);
++    }
++}
++
 +void draw_card_menu(RecompRuntimeUi *ui, LauncherTheme theme, bool touch_friendly) {
 +    ImGuiIO &io = ImGui::GetIO();
 +    const ImVec2 display = io.DisplaySize;
 +    const float short_axis = std::min(display.x, display.y);
-+    ImGui::GetBackgroundDrawList()->AddRectFilled(
-+        ImVec2(0.0f, 0.0f), display,
-+        IM_COL32(0, 0, 0, static_cast<int>(255.0f * std::max(ui->dim, 0.92f) * ui->opacity + 0.5f)));
++    const int ground_alpha =
++        static_cast<int>(255.0f * std::max(ui->dim, 0.92f) * ui->opacity + 0.5f);
++    ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0.0f, 0.0f), display,
++                                                  IM_COL32(0, 0, 0, ground_alpha));
 +
 +    if (touch_friendly) {
 +        const float scale = std::clamp(short_axis * 0.085f, 92.0f, 124.0f) / theme.row_height;
@@ -417,7 +464,24 @@ index faf17f8..d3b91a2 100644
 +        }
 +        if (wide) ImGui::SameLine(0.0f, theme.spacing_lg);
 +        if (wide || ui->in_section) {
-+            ImGui::BeginChild("##items", ImVec2(0.0f, content_h), false, child_flags);
++            // No scrollbar: it would make a long page's cards narrower than the
++            // others'. The page follows the selection and scrolls with the wheel
++            // or a drag, and fades out at an edge with more beyond it.
++            ImGui::BeginChild("##items", ImVec2(0.0f, content_h), false,
++                              child_flags | ImGuiWindowFlags_NoScrollbar);
++            const float slop = io.MouseDragThreshold * (touch_friendly ? 3.0f : 1.0f);
++            const bool dragged = (io.MouseDown[0] || io.MouseReleased[0]) &&
++                                 io.MouseDragMaxDistanceSqr[0] > slop * slop;
++            if (dragged && io.MouseDown[0] &&
++                ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem))
++                ImGui::SetScrollY(ImGui::GetScrollY() - io.MouseDelta.y);
++            // Nothing scrolls into the band that holds an edge's arrow.
++            ImVec2 clip_min = ImGui::GetWindowPos();
++            ImVec2 clip_max(clip_min.x + ImGui::GetWindowWidth(),
++                            clip_min.y + ImGui::GetWindowHeight());
++            if (ImGui::GetScrollY() > 0.5f) clip_min.y += fade_band();
++            if (ImGui::GetScrollY() < ImGui::GetScrollMaxY() - 0.5f) clip_max.y -= fade_band();
++            ImGui::PushClipRect(clip_min, clip_max, true);
 +            char title[256], heading[256];
 +            recomp_runtime_ui_page_title(ui, title, sizeof(title));
 +            upper(title, heading, sizeof(heading));
@@ -433,7 +497,9 @@ index faf17f8..d3b91a2 100644
 +            }
 +            ImGui::TextColored(col(theme.accent), "%s", heading);
 +            ImGui::Dummy(ImVec2(0.0f, theme.spacing_xs));
-+            card_items(ui, theme, touch_friendly, rim);
++            card_items(ui, theme, touch_friendly, rim, dragged);
++            ImGui::PopClipRect();
++            scroll_fades(theme, ground_alpha);
 +            ImGui::EndChild();
 +        }
 +
@@ -462,7 +528,7 @@ index faf17f8..d3b91a2 100644
  } // namespace
  
  extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
-@@ -319,6 +663,10 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
+@@ -319,6 +729,10 @@ extern "C" void recomp_runtime_ui_render_imgui(RecompRuntimeUi *ui) {
      const bool touch_friendly =
          (ui->config.presentation_flags &
           RECOMP_RUNTIME_UI_PRESENTATION_TOUCH_FRIENDLY) != 0;
