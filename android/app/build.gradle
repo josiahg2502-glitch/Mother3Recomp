@@ -40,7 +40,7 @@ ext.gbaGame = [
                      "The Spanish translation is supported.",
     variant        : variant,
     gameToml       : androidToml,
-    // The runtime menu's font (see SDL_main), with its licence.
+    // The launcher's font, also for the runtime menu (see SDL_main), with its licence.
     payloadDirs    : [[from: file("src/main/res/font"), into: "fonts"],
                       [from: file("src/main/res/raw"), into: "fonts"]],
     gameRoot       : gameRoot,
@@ -56,5 +56,29 @@ ext.gbaGame = [
 
 apply from: new File(engineRoot, "platform/android/gbarecomp-app.gradle")
 
+// Build details for Settings > Info: the pinned engine and libraries
+// (dependencies.lock.json) and this repository's commit ("+" when it has
+// uncommitted changes).
+def lock = new groovy.json.JsonSlurper().parse(new File(gameRoot, "dependencies.lock.json"))
+def cliVersion = (new File(engineRoot, "tools/cli.py").text =~ /VERSION = "([^"]+)"/)
+def engineVersion = cliVersion.find() ? cliVersion.group(1) : "?"
+def gitOutput = { List<String> command ->
+    try { return command.execute(null, gameRoot).text.trim() } catch (ignored) { return "" }
+}
+def appCommit = gitOutput(["git", "rev-parse", "--short", "HEAD"]) ?: "?"
+if (gitOutput(["git", "status", "--porcelain", "--untracked-files=no"])) appCommit += "+"
+android.defaultConfig.resValue "string", "m3_info_engine",
+    "gbarecomp ${engineVersion} (${lock.gbarecomp.revision.take(7)}), patch ${lock.gbarecomp.sha256.take(8)}"
+android.defaultConfig.resValue "string", "m3_info_libraries",
+    "recomp-ui ${lock['recomp-ui'].revision.take(7)}, rcheevos ${lock['third_party/rcheevos'].revision.take(7)}"
+android.defaultConfig.resValue "string", "m3_info_commit", appCommit
+
 android.sourceSets.main.manifest.srcFile file("src/main/AndroidManifest.xml")
 android.sourceSets.main.java.srcDir file("src/main/java")
+
+dependencies {
+    // Hoard serves cloud saves as tar.zst; zstd-jni ships the native decoders.
+    // 1.5.7-12 is the newest AAR that compiles against SDK 35: later ones
+    // declare minCompileSdk=37, which AGP 8.10 (compileSdk 35) refuses.
+    implementation "com.github.luben:zstd-jni:1.5.7-12@aar"
+}
