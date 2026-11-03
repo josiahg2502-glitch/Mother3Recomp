@@ -170,6 +170,11 @@ archive = stage.parent / (stage.name + (".tar.gz" if a.platform == "linux-x86_64
 if a.platform == "linux-x86_64":
     with tarfile.open(archive, "w:gz") as output:
         output.add(stage, arcname=stage.name)
+elif macos:
+    # zipfile follows symlinks, which drops the app's data links; ditto keeps
+    # the bundle layout that codesign verified.
+    subprocess.run(["ditto", "-c", "-k", "--sequesterRsrc", "--keepParent",
+                    str(stage), str(archive)], check=True)
 else:
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as output:
         for file in stage.rglob("*"):
