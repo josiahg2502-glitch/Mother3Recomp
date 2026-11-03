@@ -1111,13 +1111,18 @@ diff --git a/src/runtime/host_platform.cpp b/src/runtime/host_platform.cpp
 index 07f5de5..cc9a4f3 100644
 --- a/src/runtime/host_platform.cpp
 +++ b/src/runtime/host_platform.cpp
-@@ -1,5 +1,7 @@
+@@ -1,5 +1,12 @@
  #include "host_platform.h"
  
 +#include <algorithm>
 +
++#include <cstdint>
  #include <cstdio>
  #include <thread>
++
++#if defined(__APPLE__)
++#include <mach/mach_time.h>
++#endif
  
 @@ -48,8 +50,19 @@ FramePacer::~FramePacer() {
  
@@ -1193,7 +1198,7 @@ index 07f5de5..cc9a4f3 100644
              LARGE_INTEGER due;
              due.QuadPart = -static_cast<LONGLONG>(
                  due_ns >= 100 ? due_ns / 100 : 1);
-@@ -88,33 +135,23 @@ void FramePacer::wait_for_next_frame(uint64_t frames) {
+@@ -88,33 +135,36 @@ void FramePacer::wait_for_next_frame(uint64_t frames) {
              if (SetWaitableTimer(t, &due, 0, nullptr, nullptr, FALSE)) {
                  WaitForSingleObject(t, INFINITE);
              } else {
@@ -1205,6 +1210,19 @@ index 07f5de5..cc9a4f3 100644
 +            std::this_thread::sleep_until(target);
          }
      }
++#elif defined(__APPLE__)
++    if (target > now) {
++        static const double ns_to_ticks = [] {
++            mach_timebase_info_data_t info{};
++            mach_timebase_info(&info);
++            return static_cast<double>(info.denom) / static_cast<double>(info.numer);
++        }();
++        const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
++            target - now).count();
++        mach_wait_until(mach_absolute_time() +
++                        static_cast<std::uint64_t>(
++                            static_cast<double>(ns) * ns_to_ticks));
++    }
  #else
      // Hybrid wait: sleep most of the gap (cheap, but coarse), then yield
      // through the final ~1 ms for deadline accuracy.
@@ -1236,6 +1254,16 @@ diff --git a/src/runtime/host_platform.h b/src/runtime/host_platform.h
 index 42208db..4a15227 100644
 --- a/src/runtime/host_platform.h
 +++ b/src/runtime/host_platform.h
+@@ -24,6 +24,5 @@
+ // Maintains a monotonic deadline advanced by exactly one GBA frame
+-// period each call. wait() blocks until that deadline using a hybrid
+-// sleep-then-spin (Windows' default ~15.6 ms timer granularity is too
+-// coarse for a 16.74 ms target, so the pacer raises timer resolution to
+-// 1 ms for its lifetime and spins the final sub-ms). If the host falls
++// period each call. Windows raises its timer resolution to 1 ms and spins
++// the final sub-ms; macOS waits on mach_wait_until; other hosts keep the
++// sleep-then-spin hybrid. If the host falls
+ // more than a frame behind, the deadline resyncs to now rather than
 @@ -52,6 +52,9 @@ public:
      // old behavior. Fast-forward presents one frame per wait already, so
      // it is unaffected. The behind-resync below still bounds real stalls.
