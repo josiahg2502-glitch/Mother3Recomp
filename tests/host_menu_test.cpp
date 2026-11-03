@@ -46,10 +46,10 @@ int main() {
         assert(!recomp_runtime_ui_is_open(ui));
     }
     key(SDL_SCANCODE_ESCAPE);
-    assert(window.pump().quit);
+    assert(!window.pump().quit);
     recomp_runtime_ui_open(ui);
     key(SDL_SCANCODE_ESCAPE);
-    assert(window.pump().quit);
+    assert(!window.pump().quit);
     recomp_runtime_ui_close(ui);
 #if SDL_VERSION_ATLEAST(2, 0, 14)
     window.pump();
@@ -62,5 +62,5 @@ int main() {
     window.set_runtime_ui(nullptr);
     recomp_runtime_ui_destroy(ui);
     window.close();
-    puts("F11 menu, Escape exit and left analog movement: PASS");
+    puts("F11 menu, Escape does not quit, left analog movement: PASS");
 }

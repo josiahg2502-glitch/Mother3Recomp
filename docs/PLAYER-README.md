@@ -77,7 +77,6 @@ MOTHER 3's own launcher opens: the party walks around outside Tazmily while you 
 | Start / Select | Enter / Right Shift |
 | Toggle bezel (Windows) | F10 |
 | Runtime menu (desktop) | F11 |
-| Exit (desktop) | Escape |
 
 Controllers move with the left stick (the D-pad works too). Rebind keys and buttons on the launcher's Controls page.
 
