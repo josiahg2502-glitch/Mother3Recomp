@@ -197,7 +197,7 @@ int mother3_main(int argc, char** argv) {
                 "Mother3Recomp [--bios <path>] [--rom <path>] [game.toml]\n\n"
                 "Windowed play opens the launcher first; --no-launcher skips it once and\n"
                 "--classic-launcher opens the original setup launcher.\n"
-                "F10 toggles the bezel, F11 opens the menu, Escape exits.\n");
+                "F10 toggles the bezel, F11 opens the menu.\n");
             return 0;
         }
     }
@@ -216,7 +216,7 @@ int mother3_main(int argc, char** argv) {
     opts.builtin_rom_sha1 = kEnglishSha1;
     opts.allow_rom_sha1_mismatch = true;
     opts.alt_rom_sha1 = kHqAudioSha1;
-    opts.runtime_menu_scancode = 68;  // F11; Escape remains the exit key.
+    opts.runtime_menu_scancode = 68;  // F11 opens the menu.
     opts.launcher_region = "Japan + fan translations";
     opts.launcher_boxart = "assets/img/boxart_mother3.tga";  // original art, no Nintendo assets
     opts.launcher_game_config = "game.toml";

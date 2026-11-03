@@ -1926,6 +1926,18 @@ index 496d741..4d1aa87 100644
              }
          } else if (e.type == SDL_WINDOWEVENT &&
                     e.window.event == SDL_WINDOWEVENT_CLOSE) {
+@@ -3159,10 +3419,8 @@ HostWindow::Events HostWindow::pump() {
+             // save-state slots: plain = load, Shift = save. SDL's F1..F12
+             // keycodes are contiguous, so slot = sym - F1 + 1.
+             SDL_Keycode sym = e.key.keysym.sym;
+             Uint16 mods = e.key.keysym.mod;
+-            if (sym == SDLK_ESCAPE) {
+-                ev.quit = true;
+-            } else if (sym >= SDLK_F1 && sym <= SDLK_F9) {
++            if (sym >= SDLK_F1 && sym <= SDLK_F9) {
+                 int slot = static_cast<int>(sym - SDLK_F1) + 1;
+                 if (mods & KMOD_SHIFT) ev.save_slot = slot;
+                 else                   ev.load_slot = slot;
 @@ -3225,25 +3448,70 @@ HostWindow::Events HostWindow::pump() {
      // inputs. Keyboard and controller are additive so either can be used at
      // any time, including while testing motion.
