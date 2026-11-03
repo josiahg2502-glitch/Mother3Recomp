@@ -157,7 +157,6 @@ int mother3_main(int argc, char** argv) {
     setenv("GBARECOMP_AUDIO_TARGET_MS", "16", 0);
     setenv("GBARECOMP_AUDIO_SAMPLES", "256", 0);
     setenv("GBARECOMP_AUDIO_PREROLL_MS", "120", 0);
-    setenv("SDL_AUDIO_DEVICE_SAMPLE_FRAMES", "256", 0);
 #endif
 #if defined(__linux__) && !defined(__ANDROID__)
     // Generated guest calls require the same stack budget as the Windows build.
