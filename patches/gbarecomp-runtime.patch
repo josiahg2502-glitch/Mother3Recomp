@@ -3151,11 +3151,25 @@ index 05b45ea..190ec3d 100644
          if (s == "--resize-view") {
              args->resize_view = true;
              args->view_mode_set = true;
-@@ -3286,6 +3301,7 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+@@ -3286,18 +3301,21 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
              runtime_shutdown();
              return 1;
          }
-+        win.set_fill_display(args.fill_display);
          const char* runtime_title =
              opts.builtin_game_name && *opts.builtin_game_name
                  ? opts.builtin_game_name : GBARECOMP_WINDOW_TITLE;
+         win.set_orientation_policy(static_cast<int>(opts.orientation));
+         if (!win.open(args.scale, ppu.render_width(), ppu.render_height(),
+                       runtime_title,
+                       args.screen.empty() ? nullptr : args.screen.c_str(),
+                       args.linear_filter, args.sharp_filter,
+                       resize_view_enabled, opts.freely_resizable_window)) {
+             gbarecomp::overlay_loader_shutdown();
+             runtime_shutdown();
+             return 1;
+         }
++#if !defined(__ANDROID__)
++        win.set_fill_display(args.fill_display);
++#endif
+         // Rebindable input: keybinds.ini (player buttons, recomp-ui generic
+         // format) + config.ini [KeyMap] (system hotkeys), both next to the
