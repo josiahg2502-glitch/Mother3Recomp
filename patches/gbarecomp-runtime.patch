@@ -3062,3 +3062,114 @@ diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
                if (gba::GbaBus* b = gbarecomp::active_bus())
                    b->audio().shadow_driver_tick(pc, thumb != 0);
            }
+diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
+index 19a89eb..a6495bd 100644
+--- a/src/runtime/host_window.cpp
++++ b/src/runtime/host_window.cpp
+@@ -1588,7 +1588,14 @@ PresentationLayout current_presentation_layout(Backend* b, int* out_w, int* out_
+     }
+ #else
+     PresentationLayout layout{};
+-    if (!b->expanded_view && !b->resize_driven_view) {
++    if (b->fill_display) {
++        if (SDL_GetRendererOutputSize(b->renderer, &drawable_w, &drawable_h) != 0 ||
++            drawable_w <= 0 || drawable_h <= 0) {
++            SDL_GetWindowSize(b->window, &drawable_w, &drawable_h);
++        }
++        // Stretch to the drawable: every host bar is gone, aspect ignored.
++        layout = {0, 0, drawable_w, drawable_h, 0};
++    } else if (!b->expanded_view && !b->resize_driven_view) {
+         // Mirror SDL_RenderSetLogicalSize's letterbox so touch maps exactly.
+         if (SDL_GetRendererOutputSize(b->renderer, &drawable_w, &drawable_h) != 0)
+             SDL_GetWindowSize(b->window, &drawable_w, &drawable_h);
+@@ -2718,7 +2725,7 @@ void HostWindow::present(const uint8_t* rgb888, unsigned sampled_w, unsigned sam
+ #if defined(__ANDROID__)
+     copy_game_texture(b, layout, sampled_w == unsigned(b->base_w) && sampled_h == unsigned(b->base_h));
+ #else
+-    if (!b->expanded_view && !b->resize_driven_view) {
++    if (!b->expanded_view && !b->resize_driven_view && !b->fill_display) {
+         SDL_RenderCopy(b->renderer, b->texture, nullptr, nullptr);
+     } else {
+         copy_game_texture(b, layout, sampled_w == unsigned(b->base_w) && sampled_h == unsigned(b->base_h));
+@@ -2930,9 +2937,18 @@ void HostWindow::set_menu_scancode(int scancode) {
+     if (impl_) static_cast<Backend*>(impl_)->menu_scancode = scancode;
+ }
+ void HostWindow::set_fill_display(bool enabled) {
+-    if (impl_) static_cast<Backend*>(impl_)->fill_display = enabled;
++    if (!impl_) return;
++    auto* b = static_cast<Backend*>(impl_);
++    b->fill_display = enabled;
+ #if defined(__ANDROID__)
+     android_call_activity_bool("setFillDisplayFromNative", enabled);
++#else
++    if (open_) {
++        const bool explicit_view = b->expanded_view || b->resize_driven_view || enabled;
++        SDL_RenderSetLogicalSize(b->renderer, explicit_view ? 0 : b->base_w,
++                                 explicit_view ? 0 : b->base_h);
++        if (explicit_view) SDL_RenderSetViewport(b->renderer, nullptr);
++    }
+ #endif
+ }
+ bool HostWindow::fill_display() const {
+diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
+index 05b45ea..190ec3d 100644
+--- a/src/runtime/runtime.cpp
++++ b/src/runtime/runtime.cpp
+@@ -233,6 +233,9 @@ struct Args {
+     // Opt-in policy where the window drawable aspect selects view_width live.
+     // Authorization remains game-owned through RunOptions::resize_driven_view.
+     bool resize_view = false;
++    // --fill-display: stretch the picture to the drawable, dropping the host's
++    // letterbox/pillarbox bars. Aspect is not preserved.
++    bool fill_display = false;
+     bool view_mode_set = false;
+     // Desktop mouse -> touch emulation (--touch-emulation or
+     // GBARECOMP_TOUCH_EMULATION=1) for developing and validating touch input.
+@@ -878,6 +881,7 @@ constexpr std::string_view kCliValueFlags[] = {
+     "--rom-sha1",    "--rom-crc32",     "--steps",         "--frames",
+     "--scale",       "--tcp",           "--tcp-observe",   "--dump-bmp",
+     "--dump-png",    "--load-state",    "--dump-state",    "--view-width",    "--widescreen",
++    "--fill-display",
+     "--save",        "--save-path",     "--gyro-sensitivity",
+     "--sharp-filter", "--linear-filter", "--affine-filter", "--internal-resolution", "--screen",
+     "--volume",      "--replay-diagnostic", "--state-dir",
+@@ -1068,6 +1072,17 @@ bool parse_cli(int argc, char** argv, Args* args, std::string* err) {
+             }
+             continue;
+         }
++        if (s == "--fill-display") {
++            const char* v = need_value("--fill-display");
++            if (!v) return false;
++            int fill = 0;
++            if (!parse_int(v, &fill)) {
++                if (err) *err = "invalid --fill-display value";
++                return false;
++            }
++            args->fill_display = fill != 0;
++            continue;
++        }
+         if (s == "--resize-view") {
+             args->resize_view = true;
+             args->view_mode_set = true;
+@@ -3286,18 +3301,21 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+             runtime_shutdown();
+             return 1;
+         }
+         const char* runtime_title =
+             opts.builtin_game_name && *opts.builtin_game_name
+                 ? opts.builtin_game_name : GBARECOMP_WINDOW_TITLE;
+         win.set_orientation_policy(static_cast<int>(opts.orientation));
+         if (!win.open(args.scale, ppu.render_width(), ppu.render_height(),
+                       runtime_title,
+                       args.screen.empty() ? nullptr : args.screen.c_str(),
+                       args.linear_filter, args.sharp_filter,
+                       resize_view_enabled, opts.freely_resizable_window)) {
+             gbarecomp::overlay_loader_shutdown();
+             runtime_shutdown();
+             return 1;
+         }
++#if !defined(__ANDROID__)
++        win.set_fill_display(args.fill_display);
++#endif
+         // Rebindable input: keybinds.ini (player buttons, recomp-ui generic
+         // format) + config.ini [KeyMap] (system hotkeys), both next to the
