@@ -14,7 +14,7 @@ ICON_SIZES = (16, 32, 128, 256, 512)
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument("version")
-p.add_argument("platform", choices=["windows-x64", "linux-x86_64", "macos-arm64"])
+p.add_argument("platform", choices=["windows-x64", "linux-x86_64", "macos-arm64", "macos-x86_64"])
 p.add_argument("binary", type=Path)
 p.add_argument("output", type=Path)
 p.add_argument("--lib-dir", type=Path)
@@ -25,7 +25,7 @@ name = f"Mother3Recomp-v{a.version}-{a.platform}"
 stage = a.output.resolve() / name
 stage.mkdir(parents=True, exist_ok=False)
 windows = a.platform == "windows-x64"
-macos = a.platform == "macos-arm64"
+macos = a.platform.startswith("macos-")
 
 
 def macho_links(binary):

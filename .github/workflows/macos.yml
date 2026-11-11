@@ -11,12 +11,20 @@ on:
         required: false
 permissions:
   contents: read
-concurrency:
-  group: macos-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 jobs:
   macos:
-    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            arch: arm64
+          - os: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    concurrency:
+      group: macos-${{ matrix.arch }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - name: Install build dependencies
@@ -65,9 +73,9 @@ jobs:
             echo "Private gameplay inputs unavailable; native package build continues."
           fi
       - name: Package macOS build
-        run: python3 tools/package_release.py "$(cat version.txt)" macos-arm64 build/Mother3Recomp release-stage
+        run: python3 tools/package_release.py "$(cat version.txt)" "macos-${{ matrix.arch }}" build/Mother3Recomp release-stage
       - uses: actions/upload-artifact@v4
         with:
-          name: Mother3Recomp-macos-arm64
+          name: Mother3Recomp-macos-${{ matrix.arch }}
           path: release-stage/*.zip
           if-no-files-found: error

@@ -17,4 +17,9 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --target Mother3Recomp -j"$(sysctl -n hw.ncpu)"
 
 echo "Built $DIR/build/Mother3Recomp"
-echo "Stage the app with: python3 tools/package_release.py $(cat version.txt) macos-arm64 build/Mother3Recomp release-stage"
+case "$(uname -m)" in
+    arm64) platform=macos-arm64 ;;
+    x86_64) platform=macos-x86_64 ;;
+    *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+echo "Stage the app with: python3 tools/package_release.py $(cat version.txt) $platform build/Mother3Recomp release-stage"
