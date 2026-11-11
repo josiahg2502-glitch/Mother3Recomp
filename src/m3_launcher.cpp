@@ -1,6 +1,7 @@
 #include "m3_launcher.h"
 
 #include "m3_mods.h"
+#include "m3_paths.h"
 #include "m3_setup.h"
 
 #include <SDL.h>
@@ -456,7 +457,7 @@ Result run(const m3assets::Rom& rom, m3settings::Settings& st, const std::string
                     if (in == Input::Down) row = (row + 1) % rows;
                     if (in == Input::Back) leave_page();
                     else if (in == Input::Confirm && row == rows - 1) {
-                        const std::string url = "file:///" + m3mods::folder(dir);
+                        const std::string url = m3paths::file_url(m3mods::folder(dir));
                         SDL_OpenURL(url.c_str());
                     } else if (in == Input::Confirm && mods[row].valid) {
                         mods[row].enabled = !mods[row].enabled;
