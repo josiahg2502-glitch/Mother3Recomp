@@ -46,9 +46,9 @@ jobs:
       - name: Build game and regression checks
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target Mother3Recomp host_menu_test presentation_layout_tests touch_input_tests -j2
-      - name: Test runtime menu, input, layout and touch
-        run: ctest --test-dir build -R 'host_menu_test|presentation_layout_tests|touch_input_tests' --output-on-failure
+          cmake --build build --target Mother3Recomp host_menu_test presentation_layout_tests touch_input_tests m3_paths_test -j2
+      - name: Test runtime menu, input, layout, touch and paths
+        run: ctest --test-dir build -R 'host_menu_test|presentation_layout_tests|touch_input_tests|m3_paths_test' --output-on-failure
       - name: Check native gameplay with private game files
         if: inputs.native_asset_id != ''
         env:
