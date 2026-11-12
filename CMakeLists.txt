@@ -51,6 +51,7 @@ set(MOTHER3_SOURCES
     src/m3_prompts.cpp
     src/m3_bezel.cpp
     src/m3_mods.cpp
+    src/m3_paths.cpp
     src/m3_widescreen.cpp
     ${GAME_GENERATED_SOURCES})
 if(ANDROID)
@@ -224,6 +225,11 @@ if(BUILD_TESTING AND GBAGAME_RECOMP_UI AND NOT ANDROID)
     target_compile_options(host_menu_test PRIVATE -UNDEBUG)
     add_test(NAME host_menu_test COMMAND host_menu_test)
     set_tests_properties(host_menu_test PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy;SDL_AUDIODRIVER=dummy")
+
+    add_executable(m3_paths_test tests/m3_paths_test.cpp src/m3_paths.cpp)
+    target_include_directories(m3_paths_test PRIVATE src)
+    target_compile_options(m3_paths_test PRIVATE -UNDEBUG)
+    add_test(NAME m3_paths_test COMMAND m3_paths_test)
 endif()
 
 if(WIN32 AND BUILD_TESTING)
