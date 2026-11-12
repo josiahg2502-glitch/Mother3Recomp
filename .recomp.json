@@ -9,6 +9,7 @@
   "targets": [
     "Windows",
     "Linux",
+    "macOS",
     "Android"
   ],
   "toolchain": [
