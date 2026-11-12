@@ -150,6 +150,14 @@ bool m3_launcher_preboot(std::vector<std::string>& args) {
 }
 
 int mother3_main(int argc, char** argv) {
+#if defined(__APPLE__)
+    // CoreAudio buffers several video frames deep by default, and battle combos
+    // are judged against the music, so keep the output path short.
+    // setenv(..., 0) keeps any value from the environment.
+    setenv("GBARECOMP_AUDIO_TARGET_MS", "16", 0);
+    setenv("GBARECOMP_AUDIO_SAMPLES", "256", 0);
+    setenv("GBARECOMP_AUDIO_PREROLL_MS", "120", 0);
+#endif
 #if defined(__linux__) && !defined(__ANDROID__)
     // Generated guest calls require the same stack budget as the Windows build.
     struct rlimit stack;

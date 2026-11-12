@@ -1111,13 +1111,18 @@ diff --git a/src/runtime/host_platform.cpp b/src/runtime/host_platform.cpp
 index 07f5de5..cc9a4f3 100644
 --- a/src/runtime/host_platform.cpp
 +++ b/src/runtime/host_platform.cpp
-@@ -1,5 +1,7 @@
+@@ -1,5 +1,12 @@
  #include "host_platform.h"
  
 +#include <algorithm>
 +
++#include <cstdint>
  #include <cstdio>
  #include <thread>
++
++#if defined(__APPLE__)
++#include <mach/mach_time.h>
++#endif
  
 @@ -48,8 +50,19 @@ FramePacer::~FramePacer() {
  
@@ -1193,7 +1198,7 @@ index 07f5de5..cc9a4f3 100644
              LARGE_INTEGER due;
              due.QuadPart = -static_cast<LONGLONG>(
                  due_ns >= 100 ? due_ns / 100 : 1);
-@@ -88,33 +135,23 @@ void FramePacer::wait_for_next_frame(uint64_t frames) {
+@@ -88,33 +135,36 @@ void FramePacer::wait_for_next_frame(uint64_t frames) {
              if (SetWaitableTimer(t, &due, 0, nullptr, nullptr, FALSE)) {
                  WaitForSingleObject(t, INFINITE);
              } else {
@@ -1205,6 +1210,19 @@ index 07f5de5..cc9a4f3 100644
 +            std::this_thread::sleep_until(target);
          }
      }
++#elif defined(__APPLE__)
++    if (target > now) {
++        static const double ns_to_ticks = [] {
++            mach_timebase_info_data_t info{};
++            mach_timebase_info(&info);
++            return static_cast<double>(info.denom) / static_cast<double>(info.numer);
++        }();
++        const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
++            target - now).count();
++        mach_wait_until(mach_absolute_time() +
++                        static_cast<std::uint64_t>(
++                            static_cast<double>(ns) * ns_to_ticks));
++    }
  #else
      // Hybrid wait: sleep most of the gap (cheap, but coarse), then yield
      // through the final ~1 ms for deadline accuracy.
@@ -1236,6 +1254,16 @@ diff --git a/src/runtime/host_platform.h b/src/runtime/host_platform.h
 index 42208db..4a15227 100644
 --- a/src/runtime/host_platform.h
 +++ b/src/runtime/host_platform.h
+@@ -24,6 +24,5 @@
+ // Maintains a monotonic deadline advanced by exactly one GBA frame
+-// period each call. wait() blocks until that deadline using a hybrid
+-// sleep-then-spin (Windows' default ~15.6 ms timer granularity is too
+-// coarse for a 16.74 ms target, so the pacer raises timer resolution to
+-// 1 ms for its lifetime and spins the final sub-ms). If the host falls
++// period each call. Windows raises its timer resolution to 1 ms and spins
++// the final sub-ms; macOS waits on mach_wait_until; other hosts keep the
++// sleep-then-spin hybrid. If the host falls
+ // more than a frame behind, the deadline resyncs to now rather than
 @@ -52,6 +52,9 @@ public:
      // old behavior. Fast-forward presents one frame per wait already, so
      // it is unaffected. The behind-resync below still bounds real stalls.
@@ -3062,3 +3090,311 @@ diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
                if (gba::GbaBus* b = gbarecomp::active_bus())
                    b->audio().shadow_driver_tick(pc, thumb != 0);
            }
+diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
+index 349f4b0..19a89eb 100644
+--- a/src/runtime/host_window.cpp
++++ b/src/runtime/host_window.cpp
+@@ -1862,7 +1862,7 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
+     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, linear_filter ? "linear" : "nearest");
+     const int win_w = base_w * scale;
+     const int win_h = base_h * scale;
+-    Uint32 window_flags = SDL_WINDOW_SHOWN |
++    Uint32 window_flags = SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI |
+         ((b->expanded_view || b->resize_driven_view ||
+           b->freely_resizable_window)
+              ? static_cast<Uint32>(SDL_WINDOW_RESIZABLE) : Uint32{0});
+@@ -2090,6 +2090,10 @@ bool HostWindow::open(int scale, int base_w, int base_h, const char* title,
+             // lowered for low-latency play; see GBARECOMP_AUDIO_* in README.
+             cfg.target_ms   = env_int_clamped("GBARECOMP_AUDIO_TARGET_MS", 60, 12, 250);
+             cfg.preroll_ms  = env_int_clamped("GBARECOMP_AUDIO_PREROLL_MS", 250, 0, 1000);
++            // rab_init keeps only 40 ms above the pre-roll, but the pacer repays
++            // up to 100 ms of late frames as extra guest audio, which overflows
++            // the ring while the pre-roll drains. Headroom costs no latency.
++            cfg.ring_ms = std::max(cfg.target_ms, cfg.preroll_ms) + 120.0;
+             if (rab_init(&b->bridge, &cfg) == 0) b->bridge_ready = true;
+             std::fprintf(stderr,
+                          "host_window: audio=bridge driver=%s rate=%dHz "
+@@ -2502,9 +2506,19 @@ bool HostWindow::drawable_size(int* width, int* height) const {
+     // The feature follows window aspect, not texture/renderer target size.
+     // Some SDL backends keep RendererOutputSize pinned to the streaming
+     // target while the client window is resized, so use the authoritative
+-    // live client extent first. HiDPI scaling is uniform and does not alter
+-    // the aspect ratio used by the policy.
++    // live client extent first, then substitute the drawable extent when it
++    // is a whole multiple of the same aspect (HiDPI: points vs pixels).
+     SDL_GetWindowSize(b->window, width, height);
++    int out_w = 0, out_h = 0;
++    if (*width > 0 && *height > 0 &&
++        SDL_GetRendererOutputSize(b->renderer, &out_w, &out_h) == 0 &&
++        out_w >= *width && out_h >= *height &&
++        static_cast<long long>(out_w) * *height ==
++            static_cast<long long>(out_h) * *width) {
++        *width = out_w;
++        *height = out_h;
++        return true;
++    }
+     if (*width > 0 && *height > 0) return true;
+     return SDL_GetRendererOutputSize(b->renderer, width, height) == 0 &&
+            *width > 0 && *height > 0;
+diff --git a/src/runtime/overlay_abi.h b/src/runtime/overlay_abi.h
+index 09d9e9a..d993301 100644
+--- a/src/runtime/overlay_abi.h
++++ b/src/runtime/overlay_abi.h
+@@ -24,7 +24,7 @@
+ extern "C" {
+ #endif
+ 
+-#define GBA_OVERLAY_ABI_VERSION 6u
++#define GBA_OVERLAY_ABI_VERSION 7u
+ 
+ typedef struct GbaOverlayCallbacks {
+     uint32_t abi_version;  // must equal GBA_OVERLAY_ABI_VERSION
+@@ -110,6 +110,18 @@ typedef struct GbaOverlayCallbacks {
+     uint32_t (*runtime_exception_return_refill)(uint32_t target_pc);
+     uint32_t (*runtime_prefetch_stall_delta)(uint32_t wait, uint32_t pc,
+                                              uint32_t thumb);
++
++    // ABI v7: mid-function resume PC and native RAM-copy matching, shared in
++    // place with the host.
++    uint32_t* runtime_resume_pc;
++    uint32_t* runtime_native_ram_base;
++    int (*runtime_native_ram_instruction_matches)(uint32_t pc, uint32_t opcode,
++                                                  uint32_t size);
++    int (*runtime_native_ram_instruction_matches_masked)(uint32_t pc,
++                                                         uint32_t opcode,
++                                                         uint32_t size,
++                                                         uint32_t mask);
++    uint32_t (*runtime_native_arm_immediate)(uint32_t pc);
+ } GbaOverlayCallbacks;
+ 
+ // Exported by every overlay DLL:
+diff --git a/src/runtime/overlay_loader.cpp b/src/runtime/overlay_loader.cpp
+index d6d4346..4be83de 100644
+--- a/src/runtime/overlay_loader.cpp
++++ b/src/runtime/overlay_loader.cpp
+@@ -263,6 +263,13 @@ void fill_callbacks() {
+     g_callbacks.runtime_trace_enabled = &g_runtime_trace_enabled;
+     g_callbacks.runtime_cycles     = &g_runtime_cycles;
+     g_callbacks.runtime_break_pc   = &g_runtime_break_pc;
++    g_callbacks.runtime_resume_pc  = &g_runtime_resume_pc;
++    g_callbacks.runtime_native_ram_base = &g_runtime_native_ram_base;
++    g_callbacks.runtime_native_ram_instruction_matches =
++        runtime_native_ram_instruction_matches;
++    g_callbacks.runtime_native_ram_instruction_matches_masked =
++        runtime_native_ram_instruction_matches_masked;
++    g_callbacks.runtime_native_arm_immediate = runtime_native_arm_immediate;
+     g_callbacks.runtime_fn_entry_hook = &g_runtime_fn_entry_hook;
+     g_callbacks.gba_mod_function_entry = gba_mod_function_entry;
+ 
+diff --git a/src/runtime/overlay_runtime_arm.h b/src/runtime/overlay_runtime_arm.h
+index e01ebe8..d612a63 100644
+--- a/src/runtime/overlay_runtime_arm.h
++++ b/src/runtime/overlay_runtime_arm.h
+@@ -27,6 +27,21 @@ extern const GbaOverlayCallbacks* g_ovl;
+ #define g_runtime_insn_trace (*g_ovl->runtime_insn_trace)
+ #define g_runtime_cycles (*g_ovl->runtime_cycles)
+ #define g_runtime_break_pc (*g_ovl->runtime_break_pc)
++#define g_runtime_resume_pc (*g_ovl->runtime_resume_pc)
++#define g_runtime_native_ram_base (*g_ovl->runtime_native_ram_base)
++
++// Native RAM-copy guards emitted for RAM-placed fragments.
++static inline int runtime_native_ram_instruction_matches(uint32_t pc, uint32_t opcode,
++                                                         uint32_t size) {
++    return g_ovl->runtime_native_ram_instruction_matches(pc, opcode, size);
++}
++static inline int runtime_native_ram_instruction_matches_masked(uint32_t pc, uint32_t opcode,
++                                                                uint32_t size, uint32_t mask) {
++    return g_ovl->runtime_native_ram_instruction_matches_masked(pc, opcode, size, mask);
++}
++static inline uint32_t runtime_native_arm_immediate(uint32_t pc) {
++    return g_ovl->runtime_native_arm_immediate(pc);
++}
+ #define g_runtime_fn_entry_hook (*g_ovl->runtime_fn_entry_hook)
+ #define g_runtime_trace_enabled (*g_ovl->runtime_trace_enabled)
+ #define g_runtime_waits (*g_ovl->runtime_waits)
+diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
+index 5f00fac..05b45ea 100644
+--- a/src/runtime/runtime.cpp
++++ b/src/runtime/runtime.cpp
+@@ -534,6 +534,26 @@ std::uint32_t parse_hex_u32(const std::string& s) {
+     return static_cast<std::uint32_t>(v);
+ }
+ 
++// Runtime artefacts (miss proposals, coverage summaries, the overlay cache)
++// default to the working directory, which a bundle started by Finder cannot
++// write because it begins in "/". Fall back to the user's temp directory and
++// report the directory actually used.
++std::string writable_base_dir() {
++    std::error_code ec;
++    {
++        std::ofstream probe(".gbarecomp-write-probe", std::ios::binary | std::ios::app);
++        if (probe) {
++            probe.close();
++            std::filesystem::remove(".gbarecomp-write-probe", ec);
++            return ".";
++        }
++    }
++    const std::filesystem::path fallback =
++        std::filesystem::temp_directory_path(ec) / "gbarecomp";
++    std::filesystem::create_directories(fallback, ec);
++    return fallback.string();
++}
++
+ std::string resolve_config_path(const std::filesystem::path& base,
+                                 const std::string& value) {
+     std::filesystem::path p(value);
+@@ -2228,9 +2248,11 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+         if (tag.empty()) tag = "unknown";
+         const char* frag = std::getenv("GBARECOMP_MISS_FRAG");
+         const char* cov = std::getenv("GBARECOMP_COVERAGE_JSON");
++        const std::string base = writable_base_dir();
++        const std::string prefix = base == "." ? std::string{} : base + "/";
+         self_heal_frag_path =
+-            frag ? frag : "recomp_master_misses_" + tag + ".toml.frag";
+-        self_heal_cov_path = cov ? cov : "recomp_coverage_" + tag + ".json";
++            frag ? frag : prefix + "recomp_master_misses_" + tag + ".toml.frag";
++        self_heal_cov_path = cov ? cov : prefix + "recomp_coverage_" + tag + ".json";
+     }
+     gbarecomp::self_heal_set_persist_paths(self_heal_frag_path.c_str(),
+                                            self_heal_cov_path.c_str());
+@@ -2238,7 +2260,16 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+     // GBARECOMP_SELFHEAL_RECOMPILE; no-op + a clear banner when off). The cache
+     // is keyed by the cart SHA-1 so a different ROM gets a fresh DLL set; the
+     // BIOS snapshot is the immutable code image for BIOS-region heals.
+-    gbarecomp::overlay_loader_init("recomp_cache", rom_sha1, &bios);
++    std::string cache_root = "recomp_cache";
++    if (const char* cache_env = std::getenv("GBARECOMP_CACHE_DIR");
++        cache_env && *cache_env) {
++        cache_root = cache_env;
++    } else {
++        const std::string base = writable_base_dir();
++        cache_root = base == "." ? "recomp_cache"
++                                 : (std::filesystem::path(base) / "recomp_cache").string();
++    }
++    gbarecomp::overlay_loader_init(cache_root.c_str(), rom_sha1, &bios);
+ 
+     // Widescreen Step B tilemap-provenance probe (debug-only; no-op unless
+     // GBARECOMP_WS_PROBE_DRAWMETATILE is set). Installs the function-entry hook
+diff --git a/src/runtime/host_window.cpp b/src/runtime/host_window.cpp
+index 19a89eb..c1c41ea 100644
+--- a/src/runtime/host_window.cpp
++++ b/src/runtime/host_window.cpp
+@@ -2845,6 +2845,8 @@ void HostWindow::set_fullscreen(int mode) {
+                             : 0;
+     if (SDL_SetWindowFullscreen(b->window, flag) == 0) {
+         b->fullscreen = mode;
++        // A pointer over a fullscreen game is noise; restore it in a window.
++        SDL_ShowCursor(mode != 0 ? SDL_DISABLE : SDL_ENABLE);
+         // Record which panel/mode the cadence data now runs on.
+         log_display_mode(b->window,
+                          mode == 2 ? "fullscreen-exclusive"
+index 19a89eb..a6495bd 100644
+--- a/src/runtime/host_window.cpp
++++ b/src/runtime/host_window.cpp
+@@ -1588,7 +1588,14 @@ PresentationLayout current_presentation_layout(Backend* b, int* out_w, int* out_
+     }
+ #else
+     PresentationLayout layout{};
+-    if (!b->expanded_view && !b->resize_driven_view) {
++    if (b->fill_display) {
++        if (SDL_GetRendererOutputSize(b->renderer, &drawable_w, &drawable_h) != 0 ||
++            drawable_w <= 0 || drawable_h <= 0) {
++            SDL_GetWindowSize(b->window, &drawable_w, &drawable_h);
++        }
++        // Stretch to the drawable: every host bar is gone, aspect ignored.
++        layout = {0, 0, drawable_w, drawable_h, 0};
++    } else if (!b->expanded_view && !b->resize_driven_view) {
+         // Mirror SDL_RenderSetLogicalSize's letterbox so touch maps exactly.
+         if (SDL_GetRendererOutputSize(b->renderer, &drawable_w, &drawable_h) != 0)
+             SDL_GetWindowSize(b->window, &drawable_w, &drawable_h);
+@@ -2718,7 +2725,7 @@ void HostWindow::present(const uint8_t* rgb888, unsigned sampled_w, unsigned sam
+ #if defined(__ANDROID__)
+     copy_game_texture(b, layout, sampled_w == unsigned(b->base_w) && sampled_h == unsigned(b->base_h));
+ #else
+-    if (!b->expanded_view && !b->resize_driven_view) {
++    if (!b->expanded_view && !b->resize_driven_view && !b->fill_display) {
+         SDL_RenderCopy(b->renderer, b->texture, nullptr, nullptr);
+     } else {
+         copy_game_texture(b, layout, sampled_w == unsigned(b->base_w) && sampled_h == unsigned(b->base_h));
+@@ -2930,9 +2937,18 @@ void HostWindow::set_menu_scancode(int scancode) {
+     if (impl_) static_cast<Backend*>(impl_)->menu_scancode = scancode;
+ }
+ void HostWindow::set_fill_display(bool enabled) {
+-    if (impl_) static_cast<Backend*>(impl_)->fill_display = enabled;
++    if (!impl_) return;
++    auto* b = static_cast<Backend*>(impl_);
++    b->fill_display = enabled;
+ #if defined(__ANDROID__)
+     android_call_activity_bool("setFillDisplayFromNative", enabled);
++#else
++    if (open_) {
++        const bool explicit_view = b->expanded_view || b->resize_driven_view || enabled;
++        SDL_RenderSetLogicalSize(b->renderer, explicit_view ? 0 : b->base_w,
++                                 explicit_view ? 0 : b->base_h);
++        if (explicit_view) SDL_RenderSetViewport(b->renderer, nullptr);
++    }
+ #endif
+ }
+ bool HostWindow::fill_display() const {
+diff --git a/src/runtime/runtime.cpp b/src/runtime/runtime.cpp
+index 05b45ea..190ec3d 100644
+--- a/src/runtime/runtime.cpp
++++ b/src/runtime/runtime.cpp
+@@ -233,6 +233,9 @@ struct Args {
+     // Opt-in policy where the window drawable aspect selects view_width live.
+     // Authorization remains game-owned through RunOptions::resize_driven_view.
+     bool resize_view = false;
++    // --fill-display: stretch the picture to the drawable, dropping the host's
++    // letterbox/pillarbox bars. Aspect is not preserved.
++    bool fill_display = false;
+     bool view_mode_set = false;
+     // Desktop mouse -> touch emulation (--touch-emulation or
+     // GBARECOMP_TOUCH_EMULATION=1) for developing and validating touch input.
+@@ -878,6 +881,7 @@ constexpr std::string_view kCliValueFlags[] = {
+     "--rom-sha1",    "--rom-crc32",     "--steps",         "--frames",
+     "--scale",       "--tcp",           "--tcp-observe",   "--dump-bmp",
+     "--dump-png",    "--load-state",    "--dump-state",    "--view-width",    "--widescreen",
++    "--fill-display",
+     "--save",        "--save-path",     "--gyro-sensitivity",
+     "--sharp-filter", "--linear-filter", "--affine-filter", "--internal-resolution", "--screen",
+     "--volume",      "--replay-diagnostic", "--state-dir",
+@@ -1068,6 +1072,17 @@ bool parse_cli(int argc, char** argv, Args* args, std::string* err) {
+             }
+             continue;
+         }
++        if (s == "--fill-display") {
++            const char* v = need_value("--fill-display");
++            if (!v) return false;
++            int fill = 0;
++            if (!parse_int(v, &fill)) {
++                if (err) *err = "invalid --fill-display value";
++                return false;
++            }
++            args->fill_display = fill != 0;
++            continue;
++        }
+         if (s == "--resize-view") {
+             args->resize_view = true;
+             args->view_mode_set = true;
+@@ -3286,18 +3301,21 @@ int run_game(int argc, char** argv, const RunOptions& opts) {
+             runtime_shutdown();
+             return 1;
+         }
+         const char* runtime_title =
+             opts.builtin_game_name && *opts.builtin_game_name
+                 ? opts.builtin_game_name : GBARECOMP_WINDOW_TITLE;
+         win.set_orientation_policy(static_cast<int>(opts.orientation));
+         if (!win.open(args.scale, ppu.render_width(), ppu.render_height(),
+                       runtime_title,
+                       args.screen.empty() ? nullptr : args.screen.c_str(),
+                       args.linear_filter, args.sharp_filter,
+                       resize_view_enabled, opts.freely_resizable_window)) {
+             gbarecomp::overlay_loader_shutdown();
+             runtime_shutdown();
+             return 1;
+         }
++#if !defined(__ANDROID__)
++        win.set_fill_display(args.fill_display);
++#endif
+         // Rebindable input: keybinds.ini (player buttons, recomp-ui generic
+         // format) + config.ini [KeyMap] (system hotkeys), both next to the

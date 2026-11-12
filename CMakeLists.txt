@@ -216,6 +216,11 @@ if(WIN32)
 endif()
 
 include(CTest)
+if(BUILD_TESTING AND NOT ANDROID)
+    add_executable(m3_settings_test tests/m3_settings_test.cpp src/m3_settings.cpp)
+    target_include_directories(m3_settings_test PRIVATE src)
+    add_test(NAME m3_settings_test COMMAND m3_settings_test)
+endif()
 if(BUILD_TESTING AND GBAGAME_RECOMP_UI AND NOT ANDROID)
     add_executable(host_menu_test tests/host_menu_test.cpp
         "${GBARECOMP_ROOT}/tools/bios_smoke/dispatch_stub.cpp")

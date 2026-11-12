@@ -19,7 +19,9 @@ struct Settings {
     bool sharp_filter = true;
     std::string screen = "raw";  // raw, backlit, frontlit, unlit, classic
     int volume = 100;            // 0..100
-    bool widescreen = false;     // field widescreen at 16:9 (284x160; 320x180 full screen on Android)
+    int view_width = 240;        // logical view width: 240 native, 256 = 16:10, 284 = 16:9
+    bool fill_display = false;   // stretch the picture to the window, dropping host bars
+    bool widescreen = false;     // derived from view_width > 240 (Android setup reads the key)
     int prompt_style = 0;        // in-game buttons: 0 auto, 1 Xbox, 2 PlayStation, 3 Nintendo, 4 keyboard
     int smooth = 0;              // smooth motion: 0 off, 1 on 100 Hz+ displays, 2 always
     bool hq_audio = true;        // built-in HQ audio mixer on supported ROMs (changes RNG and RAM layout)
